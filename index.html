@@ -3475,6 +3475,9 @@ async function signOut() {
   try {
     await auth.signOut();
   } finally {
+    // A conexão com o Nota Mestra é uma sessão separada (outro projeto Firebase)
+    // e não deve sobreviver ao logout do Correção Mestra.
+    try { await nmAuth.signOut(); } catch (e) {}
     // Restaura o botão do Google após o logout (seja bem ou mal-sucedido)
     const btn = document.getElementById('btn-google-login');
     if (btn) {
@@ -4644,6 +4647,15 @@ const nmLink = {
 
 /* Mantém sessão entre recarregamentos da página (persistência própria do app secundário) */
 nmAuth.onAuthStateChanged(user => {
+  // A conexão com o Nota Mestra só é válida com um login ativo no Correção
+  // Mestra. Sem essa checagem, uma sessão do Nota Mestra salva no navegador
+  // (persistência própria, independente do app principal) ficaria conectada
+  // sozinha mesmo depois de um logout do Correção Mestra — inclusive
+  // recarregando as turmas em segundo plano sem ninguém logado.
+  if (user && !auth.currentUser) {
+    nmAuth.signOut().catch(() => {});
+    return;
+  }
   nmLink.user = user || null;
   if (!user) {
     nmLink.turmas = [];
