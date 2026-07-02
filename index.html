@@ -2725,8 +2725,11 @@ html, body {
      ela já é fullscreen (position:fixed; inset:0) por padrão, então
      não precisa de nenhum ajuste aqui. */
 
-  /* ── LOGIN em duas colunas, tela cheia ── */
-  #screen-login { display: flex !important; flex-direction: row !important; }
+  /* ── LOGIN em duas colunas, tela cheia ──
+     :not(.hidden) é essencial: sem isso, o seletor por ID (mais específico
+     que a classe .hidden, mesmo com !important) força a tela a ficar
+     visível o tempo todo, ignorando showScreen()/logout. */
+  #screen-login:not(.hidden) { display: flex !important; flex-direction: row !important; }
   .login-hero { flex: 1 1 46%; min-height: auto !important; }
   .login-card {
     flex: 1 1 54%; border-radius: 0 !important; border-top: none !important;
@@ -2735,11 +2738,11 @@ html, body {
   }
 
   /* ── ONBOARDING centralizado, tela cheia ── */
-  #screen-onboarding { display: flex !important; align-items: center; justify-content: center; }
+  #screen-onboarding:not(.hidden) { display: flex !important; align-items: center; justify-content: center; }
   #screen-onboarding > * { width: 100%; max-width: 640px; }
 
   /* ── APP PRINCIPAL: barra lateral no lugar da barra inferior ── */
-  #screen-app {
+  #screen-app:not(.hidden) {
     display: grid !important;
     grid-template-columns: 240px 1fr;
     grid-template-rows: 56px 1fr;
