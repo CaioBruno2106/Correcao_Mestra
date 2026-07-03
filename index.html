@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#002B5C">
-<title>Correção Mestra</title>
+<title>Nota Mestra</title>
 <!-- build: v7 (Etapa 7 — Exportação JSON para Nota Mestra, formato de backup por turma, prova ou atividade) -->
 <!-- build anterior: v7a (Etapa A — Arquivar provas · Excluir correções · Nota por disciplina na conferência) -->
 
@@ -2349,7 +2349,7 @@ html, body {
 .modal-overlay {
   position: fixed; inset: 0; z-index: 1000;
   background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
-  display: flex; align-items: flex-end;
+  display: flex; align-items: flex-end; justify-content: center;
   animation: fade-in 0.2s ease;
 }
 .modal {
@@ -2808,6 +2808,36 @@ html, body {
   .modal { width: min(520px, 90vw) !important; border-radius: 20px !important; max-width:none !important; }
   .modal-handle { display: none; }
 
+  /* ── Barra lateral recolhível (modo PC) ── */
+  .sidebar-toggle-btn {
+    display: flex; align-items: center; gap: 12px;
+    height: 40px; padding: 0 14px; margin-top: 8px;
+    border-radius: var(--r-md); border: none; cursor: pointer;
+    background: transparent; color: rgba(255,255,255,.55);
+    border-top: 1px solid rgba(255,255,255,.08);
+    padding-top: 12px; margin-top: auto;
+    -webkit-tap-highlight-color: transparent;
+    transition: background .2s, color .2s;
+    font-size: 13px; font-weight: 600; font-family: inherit;
+    width: 100%; text-align: left;
+  }
+  .sidebar-toggle-btn:hover { background: rgba(255,255,255,.06); color: #fff; }
+  .sidebar-toggle-btn svg { width: 19px; height: 19px; flex-shrink: 0; transition: transform .25s; }
+
+  #screen-app.sidebar-collapsed { grid-template-columns: 76px 1fr !important; }
+  #screen-app.sidebar-collapsed .bottom-nav { width: 76px !important; }
+  #screen-app.sidebar-collapsed .nav-item {
+    justify-content: center; padding: 0; gap: 0;
+  }
+  #screen-app.sidebar-collapsed .nav-item span,
+  #screen-app.sidebar-collapsed .sidebar-toggle-label {
+    display: none;
+  }
+  #screen-app.sidebar-collapsed .sidebar-toggle-btn {
+    justify-content: center; padding-left: 0; padding-right: 0;
+  }
+  #screen-app.sidebar-collapsed .sidebar-toggle-btn svg { transform: rotate(180deg); }
+
   /* Aviso de recurso indisponível no desktop */
   .desktop-only-hint {
     display: flex !important; align-items: center; gap: 10px;
@@ -3253,6 +3283,15 @@ function showScreenAfterSplash(screenId, callback) {
       </svg>
       <span>Mais</span>
     </div>
+
+    <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" onclick="toggleSidebar()" title="Recolher menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="9" y1="3" x2="9" y2="21"/>
+        <polyline points="14 9 11 12 14 15"/>
+      </svg>
+      <span class="sidebar-toggle-label">Recolher menu</span>
+    </button>
   </div>
 </div>
 
@@ -3280,13 +3319,35 @@ function toggleDarkMode() {
 function isDesktopMode() {
   try { return window.matchMedia('(min-width: 900px)').matches; } catch(e) { return false; }
 }
+
+/* ═══════════════════════════════════════════
+   BARRA LATERAL RECOLHÍVEL (modo PC)
+═══════════════════════════════════════════ */
+function syncSidebarToggleBtn() {
+  var collapsed = document.getElementById('screen-app')?.classList.contains('sidebar-collapsed');
+  var btn = document.getElementById('sidebar-toggle-btn');
+  if (btn) btn.title = collapsed ? 'Expandir menu' : 'Recolher menu';
+}
+function toggleSidebar() {
+  var screenApp = document.getElementById('screen-app');
+  if (!screenApp) return;
+  var collapsed = screenApp.classList.toggle('sidebar-collapsed');
+  syncSidebarToggleBtn();
+  try { localStorage.setItem('cm_sidebar_collapsed', collapsed ? '1' : '0'); } catch(e) {}
+}
 (function() {
   try {
     if (localStorage.getItem('cm_dark') === '1') {
       document.body.classList.add('dark-mode');
     }
+    if (localStorage.getItem('cm_sidebar_collapsed') === '1') {
+      document.getElementById('screen-app')?.classList.add('sidebar-collapsed');
+    }
   } catch(e) {}
-  document.addEventListener('DOMContentLoaded', syncDarkModeBtn);
+  document.addEventListener('DOMContentLoaded', function() {
+    syncDarkModeBtn();
+    syncSidebarToggleBtn();
+  });
 })();
 </script>
 
