@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#002B5C">
 <title>Correção Mestra</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iIzBCM0Q3NSIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMwMDJCNUMiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgcng9IjE0IiBmaWxsPSJ1cmwoI2cpIi8+CiAgPHBhdGggZD0iTTE4IDMzIEwyOCA0MyBMNDcgMjAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0ZGRkZGRiIgc3Ryb2tlLXdpZHRoPSI2IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cg==">
 <!-- build: v7 (Etapa 7 — Exportação JSON para Nota Mestra, formato de backup por turma, prova ou atividade) -->
 <!-- build anterior: v7a (Etapa A — Arquivar provas · Excluir correções · Nota por disciplina na conferência) -->
 
@@ -1789,7 +1790,7 @@ html, body {
 .app-icon-sm svg { width: 20px; height: 20px; }
 
 /* ═══════════════════════════════════════════════
-   TELA: SPLASH — Correção Mestra
+   TELA: SPLASH — Nota Mestra
 ═══════════════════════════════════════════════ */
 #screen-splash {
   position: fixed; inset: 0;
@@ -2349,7 +2350,7 @@ html, body {
 .modal-overlay {
   position: fixed; inset: 0; z-index: 1000;
   background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
-  display: flex; align-items: flex-end; justify-content: center;
+  display: flex; align-items: flex-end;
   animation: fade-in 0.2s ease;
 }
 .modal {
@@ -2808,36 +2809,6 @@ html, body {
   .modal { width: min(520px, 90vw) !important; border-radius: 20px !important; max-width:none !important; }
   .modal-handle { display: none; }
 
-  /* ── Barra lateral recolhível (modo PC) ── */
-  .sidebar-toggle-btn {
-    display: flex; align-items: center; gap: 12px;
-    height: 40px; padding: 0 14px; margin-top: 8px;
-    border-radius: var(--r-md); border: none; cursor: pointer;
-    background: transparent; color: rgba(255,255,255,.55);
-    border-top: 1px solid rgba(255,255,255,.08);
-    padding-top: 12px; margin-top: auto;
-    -webkit-tap-highlight-color: transparent;
-    transition: background .2s, color .2s;
-    font-size: 13px; font-weight: 600; font-family: inherit;
-    width: 100%; text-align: left;
-  }
-  .sidebar-toggle-btn:hover { background: rgba(255,255,255,.06); color: #fff; }
-  .sidebar-toggle-btn svg { width: 19px; height: 19px; flex-shrink: 0; transition: transform .25s; }
-
-  #screen-app.sidebar-collapsed { grid-template-columns: 76px 1fr !important; }
-  #screen-app.sidebar-collapsed .bottom-nav { width: 76px !important; }
-  #screen-app.sidebar-collapsed .nav-item {
-    justify-content: center; padding: 0; gap: 0;
-  }
-  #screen-app.sidebar-collapsed .nav-item span,
-  #screen-app.sidebar-collapsed .sidebar-toggle-label {
-    display: none;
-  }
-  #screen-app.sidebar-collapsed .sidebar-toggle-btn {
-    justify-content: center; padding-left: 0; padding-right: 0;
-  }
-  #screen-app.sidebar-collapsed .sidebar-toggle-btn svg { transform: rotate(180deg); }
-
   /* Aviso de recurso indisponível no desktop */
   .desktop-only-hint {
     display: flex !important; align-items: center; gap: 10px;
@@ -2862,7 +2833,7 @@ html, body {
      SPLASH
 ═══════════════════════════════════════════ -->
 <div id="screen-splash">
-  <!-- Ícone animado Correção Mestra -->
+  <!-- Ícone animado Nota Mestra -->
   <div class="nm-icon-wrap" id="nm-icon">
     <div class="nm-bg"></div>
     <div class="nm-paper"></div>
@@ -2897,7 +2868,7 @@ function showScreenAfterSplash(screenId, callback) {
   }, remaining);
 }
 
-/* ── Animação da splash Correção Mestra ──
+/* ── Animação da splash Nota Mestra ──
    Sequência fiel à referência:
    1 fundo · 2 folha · 3 círculos aparecem · 4 pontos se preenchem · 5 símbolo · 6 pronto
 */
@@ -2975,7 +2946,7 @@ function showScreenAfterSplash(screenId, callback) {
       style="position:absolute;top:calc(14px + env(safe-area-inset-top,0));right:14px;z-index:2;background:rgba(0,43,92,.35);"></button>
 
     <div class="login-hero-content">
-      <!-- Ícone Correção Mestra estático (versão compacta para login) -->
+      <!-- Ícone Nota Mestra estático (versão compacta para login) -->
       <div class="login-hero-icon" style="background:#EEF2FA;overflow:visible;position:relative;clip-path:polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%)">
         <!-- canto dobrado -->
         <div style="position:absolute;top:0;right:0;width:18px;height:18px;background:#C8D4E8;clip-path:polygon(0 0,100% 100%,0 100%);border-radius:0 0 0 4px;z-index:2"></div>
@@ -3204,7 +3175,7 @@ function showScreenAfterSplash(screenId, callback) {
   <!-- Top bar -->
   <div class="topbar">
     <div class="topbar-left">
-      <!-- Ícone Correção Mestra mini (topbar) -->
+      <!-- Ícone Nota Mestra mini (topbar) -->
       <div class="topbar-logo-icon" style="background:#EEF2FA;overflow:hidden;clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,0 100%)">
         <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:26px;height:26px">
           <circle cx="6"  cy="14" r="2.1" fill="#0056B3" opacity="0.28"/>
@@ -3283,15 +3254,6 @@ function showScreenAfterSplash(screenId, callback) {
       </svg>
       <span>Mais</span>
     </div>
-
-    <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" onclick="toggleSidebar()" title="Recolher menu">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="2"/>
-        <line x1="9" y1="3" x2="9" y2="21"/>
-        <polyline points="14 9 11 12 14 15"/>
-      </svg>
-      <span class="sidebar-toggle-label">Recolher menu</span>
-    </button>
   </div>
 </div>
 
@@ -3319,35 +3281,13 @@ function toggleDarkMode() {
 function isDesktopMode() {
   try { return window.matchMedia('(min-width: 900px)').matches; } catch(e) { return false; }
 }
-
-/* ═══════════════════════════════════════════
-   BARRA LATERAL RECOLHÍVEL (modo PC)
-═══════════════════════════════════════════ */
-function syncSidebarToggleBtn() {
-  var collapsed = document.getElementById('screen-app')?.classList.contains('sidebar-collapsed');
-  var btn = document.getElementById('sidebar-toggle-btn');
-  if (btn) btn.title = collapsed ? 'Expandir menu' : 'Recolher menu';
-}
-function toggleSidebar() {
-  var screenApp = document.getElementById('screen-app');
-  if (!screenApp) return;
-  var collapsed = screenApp.classList.toggle('sidebar-collapsed');
-  syncSidebarToggleBtn();
-  try { localStorage.setItem('cm_sidebar_collapsed', collapsed ? '1' : '0'); } catch(e) {}
-}
 (function() {
   try {
     if (localStorage.getItem('cm_dark') === '1') {
       document.body.classList.add('dark-mode');
     }
-    if (localStorage.getItem('cm_sidebar_collapsed') === '1') {
-      document.getElementById('screen-app')?.classList.add('sidebar-collapsed');
-    }
   } catch(e) {}
-  document.addEventListener('DOMContentLoaded', function() {
-    syncDarkModeBtn();
-    syncSidebarToggleBtn();
-  });
+  document.addEventListener('DOMContentLoaded', syncDarkModeBtn);
 })();
 </script>
 
@@ -4039,7 +3979,7 @@ function mais() {
   </div>
 
   <div style="padding:20px;text-align:center;color:var(--text-dim);font-size:11px;">
-    Correção Mestra - Corretor de provas
+    Correção Mestra - Um programa Nota Mestra
   </div>`;
 }
 
