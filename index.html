@@ -4984,7 +4984,13 @@ async function carregarTurmasNM(forcar) {
         id: t.id, nome: t.nome, serie: t.serie, turma: t.turma, nivel: t.nivel,
         turno: t.turno, disciplina: t.disciplina, anoLetivo: t.anoLetivo,
         sistema: t.sistema,
-        alunos: (t.alunos || []).map(a => typeof a === 'string' ? { nome: a } : a),
+        // O Nota Mestra nunca apaga um aluno da turma quando ele é removido/
+        // transferido — só marca ativo:false, e sempre filtra isso nas contagens
+        // dele. Se não filtrarmos aqui também, alunos que já saíram da turma lá
+        // voltam a aparecer (e a contar) do lado de cá.
+        alunos: (t.alunos || [])
+          .map(a => typeof a === 'string' ? { nome: a, ativo: true } : a)
+          .filter(a => a.ativo !== false),
         unidades
       });
     }
@@ -5027,7 +5033,11 @@ async function carregarTurmasNM(forcar) {
             id: t.id, nome: t.nome, serie: t.serie, turma: t.turma, nivel: t.nivel,
             turno: t.turno, disciplina: t.disciplina, anoLetivo: t.anoLetivo,
             sistema: t.sistema,
-            alunos: (t.alunos || []).map(a => typeof a === 'string' ? { nome: a } : a),
+            // mesmo motivo do bloco de turmas pessoais acima: nunca sincronizar
+            // alunos marcados como ativo:false (já saíram da turma no Nota Mestra).
+            alunos: (t.alunos || [])
+              .map(a => typeof a === 'string' ? { nome: a, ativo: true } : a)
+              .filter(a => a.ativo !== false),
             unidades,
             escolaVinculadaId: escolaId,
             escolaVinculadaNome: t.escolaNome || null
@@ -5069,7 +5079,7 @@ async function sincronizarTurmasNM() {
 
     await loadCache(true);
 
-    let turmasCriadas = 0, turmasAtualizadas = 0, alunosCriados = 0;
+    let turmasCriadas = 0, turmasAtualizadas = 0, alunosCriados = 0, alunosTotal = 0;
     const batch = db.batch();
     let ops = 0;
 
@@ -5123,10 +5133,14 @@ async function sincronizarTurmasNM() {
       }
 
       // 2) sincroniza os alunos dessa turma
+      // Segurança extra: mesmo já filtrando ativo:false na origem (carregarTurmasNM),
+      // filtramos de novo aqui — nmLink.turmas pode vir de um cache antigo em memória.
+      const alunosAtivosNM = (tNM.alunos || []).filter(a => (typeof a === 'string' ? true : a.ativo !== false));
+
       const alunosLocaisDaTurma = (cache.alunos || []).filter(a => a.turmaId === localId);
       const nomesLocaisNorm = new Set(alunosLocaisDaTurma.map(a => _normNomeNM(a.nome)));
 
-      for (const aNM of (tNM.alunos || [])) {
+      for (const aNM of alunosAtivosNM) {
         const nomeAluno = (typeof aNM === 'string' ? aNM : aNM.nome || '').trim();
         if (!nomeAluno) continue;
         const norm = _normNomeNM(nomeAluno);
@@ -5150,13 +5164,31 @@ async function sincronizarTurmasNM() {
         // nisso numa sincronização normal, mas por segurança commitamos em blocos.
         if (ops >= 450) { await batch.commit(); ops = 0; }
       }
+
+      // nomesLocaisNorm, ao final do loop, tem o conjunto completo (já existentes +
+      // recém-criados) de alunos ativos desta turma — é a contagem real e correta,
+      // sem depender de "quantos eram novos".
+      alunosTotal += nomesLocaisNorm.size;
     }
 
     if (ops > 0) await batch.commit();
 
     cache.turmas = null; cache.alunos = null;
     await loadCache(true);
-    toast(`Sincronizado: ${turmasCriadas} turma(s) nova(s), ${turmasAtualizadas} vinculada(s), ${alunosCriados} aluno(s) novo(s)`, 'success');
+
+    // Mensagem final: mostra o que realmente mudou (turmas novas e vinculadas)
+    // e a contagem correta de alunos — total sincronizado (o que existe de fato
+    // em cada turma agora) e quantos desses são novos nesta sincronização.
+    const partesTurmas = [];
+    if (turmasCriadas)     partesTurmas.push(`${turmasCriadas} turma${turmasCriadas>1?'s':''} nova${turmasCriadas>1?'s':''}`);
+    if (turmasAtualizadas) partesTurmas.push(`${turmasAtualizadas} turma${turmasAtualizadas>1?'s':''} vinculada${turmasAtualizadas>1?'s':''}`);
+    const resumoTurmas = partesTurmas.length ? partesTurmas.join(', ') : 'nenhuma turma nova';
+
+    const resumoAlunos = alunosCriados > 0
+      ? `${alunosCriados} aluno${alunosCriados>1?'s':''} novo${alunosCriados>1?'s':''} (${alunosTotal} no total, já sincronizado${alunosTotal>1?'s':''})`
+      : `${alunosTotal} aluno${alunosTotal>1?'s':''} já sincronizado${alunosTotal>1?'s':''}, nenhum novo`;
+
+    toast(`Sincronização concluída: ${resumoTurmas} · ${resumoAlunos}`, 'success');
     refreshCurrentView();
     if (document.getElementById('btn-nm-sincronizar')) abrirConexaoNM();
   } catch (e) {
