@@ -74,8 +74,17 @@ function escapeHtml(s) {
 }
 
 function turmaNomeById(id) {
+  if (!id) return 'Sem turma';
   const t = cache.turmas?.find(x => x.id === id);
-  return t ? t.nome : '—';
+  return t ? t.nome : 'Turma excluída';
+}
+
+// Alunos cujo turmaId aponta pra uma turma que não existe mais (a exclusão de
+// turma remove só o documento da turma — os alunos ficam com o vínculo velho
+// em vez de virarem "sem turma"). Usado pra oferecer a limpeza em lote.
+function alunosOrfaos() {
+  const idsValidos = new Set((cache.turmas || []).map(t => t.id));
+  return (cache.alunos || []).filter(a => a.turmaId && !idsValidos.has(a.turmaId));
 }
 
 /* ── Multiturma: provas podem estar vinculadas a uma ou mais turmas ──
@@ -400,20 +409,35 @@ async function renderAlunos() {
   // Chips de turma (turmas arquivadas ficam fora dos chips, mas os alunos delas
   // continuam aparecendo normalmente em "Todas")
   const turmas = (cache.turmas || []).filter(t => !t.arquivada);
+  const orfaos = alunosOrfaos();
   chipsEl.innerHTML = [
     `<div class="chip ${alunosFiltroTurma==='all'?'active':''}" onclick="setAlunoFiltro('all')">Todas</div>`,
     ...turmas.map(t => `<div class="chip ${alunosFiltroTurma===t.id?'active':''}" onclick="setAlunoFiltro('${t.id}')">${escapeHtml(t.nome)}</div>`),
-    `<div class="chip ${alunosFiltroTurma==='sem'?'active':''}" onclick="setAlunoFiltro('sem')">Sem turma</div>`
+    `<div class="chip ${alunosFiltroTurma==='sem'?'active':''}" onclick="setAlunoFiltro('sem')">Sem turma</div>`,
+    orfaos.length ? `<div class="chip ${alunosFiltroTurma==='orfao'?'active':''}" onclick="setAlunoFiltro('orfao')" style="color:var(--red)">Turma excluída (${orfaos.length})</div>` : ''
   ].join('');
   // Filtros
   const search = (document.getElementById('alunos-search')?.value || '').toLowerCase().trim();
   let arr = cache.alunos || [];
-  if (alunosFiltroTurma === 'sem')  arr = arr.filter(a => !a.turmaId);
-  else if (alunosFiltroTurma !== 'all') arr = arr.filter(a => a.turmaId === alunosFiltroTurma);
+  if (alunosFiltroTurma === 'sem')        arr = arr.filter(a => !a.turmaId);
+  else if (alunosFiltroTurma === 'orfao') arr = orfaos;
+  else if (alunosFiltroTurma !== 'all')   arr = arr.filter(a => a.turmaId === alunosFiltroTurma);
   if (search) arr = arr.filter(a => (a.nome||'').toLowerCase().includes(search));
   countEl.textContent = `${arr.length} aluno${arr.length===1?'':'s'}`;
+
+  // Banner de limpeza: some quando o filtro atual é "Turma excluída", com o
+  // botão de excluir todos de uma vez — assim não precisa apagar um por um.
+  const bannerHtml = alunosFiltroTurma === 'orfao' && orfaos.length ? `
+    <div class="medias-card" style="margin-bottom:10px;border-color:var(--red)">
+      <div style="font-size:13px;color:var(--text-muted);line-height:1.5;margin-bottom:8px">
+        Estes ${orfaos.length} aluno${orfaos.length>1?'s':''} pertenciam a turmas que já foram excluídas.
+        Eles não aparecem em nenhuma turma ativa.
+      </div>
+      <button class="btn btn-danger" onclick="excluirAlunosOrfaos()">Excluir todos (${orfaos.length})</button>
+    </div>` : '';
+
   if (!arr.length) {
-    listEl.innerHTML = `
+    listEl.innerHTML = bannerHtml + `
       <div class="empty-state">
         <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
         <div class="empty-title">Nenhum aluno</div>
@@ -422,7 +446,7 @@ async function renderAlunos() {
       </div>`;
     return;
   }
-  listEl.innerHTML = arr.map(a => `
+  listEl.innerHTML = bannerHtml + arr.map(a => `
     <div class="aluno-row" onclick="abrirBoletimAluno(&apos;${a.id}&apos;)" style="cursor:pointer">
       <div class="aluno-avatar">${escapeHtml(initials(a.nome))}</div>
       <div style="flex:1;min-width:0">
@@ -435,6 +459,47 @@ async function renderAlunos() {
         <button class="icon-btn danger" onclick="event.stopPropagation();excluirAluno('${a.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
       </div>
     </div>`).join('');
+}
+
+/* ── Exclusão em lote dos alunos "órfãos" (turmaId aponta pra turma já excluída) ── */
+function excluirAlunosOrfaos() {
+  const orfaos = alunosOrfaos();
+  if (!orfaos.length) { toast('Nenhum aluno de turma excluída encontrado', ''); return; }
+  showModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">Excluir alunos de turmas excluídas?</div>
+    <div style="font-size:14px;color:var(--text-muted);line-height:1.5;">
+      <strong style="color:var(--text)">${orfaos.length} aluno${orfaos.length>1?'s':''}</strong>
+      ${orfaos.length>1?'serão removidos':'será removido'} definitivamente — eles pertenciam a
+      turma${orfaos.length>1?'s':''} que já ${orfaos.length>1?'foram':'foi'} excluída${orfaos.length>1?'s':''}.
+      Resultados de provas já corrigidas para eles não vinculados continuam guardados, mas os
+      cadastros em si não podem ser desfeitos depois.
+    </div>
+    <button class="btn btn-danger" id="btn-confirma-orfaos" onclick="confirmaExcluirAlunosOrfaos()">Sim, excluir todos</button>
+    <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+  `);
+}
+async function confirmaExcluirAlunosOrfaos() {
+  const orfaos = alunosOrfaos();
+  setLoading('btn-confirma-orfaos', true);
+  try {
+    let batch = db.batch();
+    let ops = 0;
+    for (const a of orfaos) {
+      batch.delete(ref.alunos().doc(a.id));
+      ops++;
+      // Firestore permite até 500 operações por batch.
+      if (ops >= 450) { await batch.commit(); batch = db.batch(); ops = 0; }
+    }
+    if (ops > 0) await batch.commit();
+    cache.alunos = null;
+    await loadCache(true);
+    toast(`${orfaos.length} aluno${orfaos.length>1?'s':''} excluído${orfaos.length>1?'s':''}`, 'success');
+    closeModal();
+    refreshCurrentView();
+  } catch (e) {
+    toast('Erro ao excluir: ' + e.message, 'error');
+  }
 }
 
 function setAlunoFiltro(v) { alunosFiltroTurma = v; renderAlunos(); }
