@@ -4958,12 +4958,14 @@ async function carregarTurmasNM(forcar) {
   setLoading('btn-nm-atualizar', true);
   try {
     const uid = nmLink.user.uid;
-    const tSnap = await nmDb.collection('users').doc(uid).collection('turmas').get();
     const turmas = [];
 
+    // ── 1) Turmas pessoais (sem vínculo) — como já era ──────────────────
+    const tSnap = await nmDb.collection('users').doc(uid).collection('turmas').get();
     for (const tDoc of tSnap.docs) {
       const t = { id: tDoc.id, ...tDoc.data() };
-      if (t.ativo === false) continue; // ignora turmas inativas
+      if (t.ativo === false) continue;      // ignora turmas inativas
+      if (t.generica === true) continue;    // turma-molde, sem notas próprias
 
       let unidades = [];
       try {
@@ -4983,6 +4985,55 @@ async function carregarTurmasNM(forcar) {
         alunos: (t.alunos || []).map(a => typeof a === 'string' ? { nome: a } : a),
         unidades
       });
+    }
+
+    // ── 2) Turmas de escolas VINCULADAS (gestão/coordenação com código) ──
+    // O Nota Mestra guarda, em users/{uid}/escolasVinculo, em quais escolas
+    // compartilhadas o professor é membro. As turmas de verdade (cópias por
+    // disciplina que ele mesmo criou) ficam em escolas/{escolaId}/turmas.
+    // A turma "genérica" (molde criado pela gestão, sem disciplina) é
+    // ignorada aqui — ela não tem notas, só serve de base pras cópias.
+    try {
+      const vincSnap = await nmDb.collection('users').doc(uid).collection('escolasVinculo').get();
+      for (const vDoc of vincSnap.docs) {
+        const escolaId = vDoc.id;
+        let escolaTurmasSnap;
+        try {
+          escolaTurmasSnap = await nmDb.collection('escolas').doc(escolaId).collection('turmas').get();
+        } catch (e) {
+          console.warn('Sem acesso às turmas da escola vinculada', escolaId, e);
+          continue;
+        }
+        for (const tDoc of escolaTurmasSnap.docs) {
+          const t = { id: tDoc.id, ...tDoc.data() };
+          if (t.ativo === false) continue;
+          if (t.generica === true) continue;   // turma-molde, sem notas
+          if (t.criadoPor !== uid) continue;    // só as que o próprio usuário copiou/criou
+
+          let unidades = [];
+          try {
+            const uSnap = await nmDb.collection('escolas').doc(escolaId)
+              .collection('turmas').doc(t.id).collection('unidades').get();
+            unidades = uSnap.docs
+              .map(d => ({ id: d.id, ...d.data() }))
+              .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+          } catch (e) {
+            console.warn('Erro ao carregar unidades de', t.nome, e);
+          }
+
+          turmas.push({
+            id: t.id, nome: t.nome, serie: t.serie, turma: t.turma, nivel: t.nivel,
+            turno: t.turno, disciplina: t.disciplina, anoLetivo: t.anoLetivo,
+            sistema: t.sistema,
+            alunos: (t.alunos || []).map(a => typeof a === 'string' ? { nome: a } : a),
+            unidades,
+            escolaVinculadaId: escolaId,
+            escolaVinculadaNome: t.escolaNome || null
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar escolas vinculadas do Nota Mestra:', e);
     }
 
     nmLink.turmas = turmas;
@@ -5235,7 +5286,7 @@ function renderFormImportacaoNM() {
       <select class="input" id="imp-nm-turma" onchange="_impNM.turmaId=this.value;_impNM.unidadeId=null;renderFormImportacaoNM()">
         ${nmLink.turmas.map(t => `
           <option value="${t.id}" ${t.id === _impNM.turmaId ? 'selected' : ''}>
-            ${escapeHtml(t.nome)}${t.disciplina ? ' · ' + escapeHtml(t.disciplina) : ''}
+            ${escapeHtml(t.nome)}${t.disciplina ? ' · ' + escapeHtml(t.disciplina) : ''}${t.escolaVinculadaNome ? ' — ' + escapeHtml(t.escolaVinculadaNome) : ''}
           </option>
         `).join('')}
       </select>
