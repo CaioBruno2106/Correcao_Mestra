@@ -1505,7 +1505,7 @@ async function abrirProva(id) {
       <div class="info-pill"><div class="info-pill-label">Soma pesos</div><div class="info-pill-value">${somaPesos.toFixed(2)}</div></div>
     </div>
 
-    <div class="desktop-only-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> A correção por foto do cartão-resposta funciona apenas no app do celular. Aqui no computador, use este espaço para gerar o cartão e ver os resultados.</div>
+    ${ isDesktopMode() ? `<div class="desktop-only-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> A correção por foto do cartão-resposta funciona apenas no celular ou tablet. Aqui no computador, use este espaço para gerar o cartão e ver os resultados.</div>` : '' }
     <div class="dash-quick-actions" style="padding:0 16px 16px">
       <div class="quick-action" onclick="gerarCartao('${p.id}')">
         <div class="quick-action-icon yellow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
@@ -3484,8 +3484,36 @@ function toggleDarkMode() {
   syncDarkModeBtn();
   try { localStorage.setItem('cm_dark', isDark ? '1' : '0'); } catch(e) {}
 }
+/* Detecta se o dispositivo É REALMENTE um computador (mouse/teclado),
+   e não apenas "tela larga". Antes isso usava só a largura da janela
+   (min-width:900px), o que bloqueava indevidamente tablets e celulares
+   grandes/em paisagem — eles têm tela larga mas são touch. Agora:
+   1) user-agent bate com padrão de celular/tablet → NÃO é desktop;
+   2) iPadOS 13+ se identifica como "Macintosh", então checamos suporte
+      a toque (maxTouchPoints) para pegar esse caso também;
+   3) qualquer outro dispositivo com toque (touch) é tratado como
+      celular/tablet, não como PC;
+   4) sobrando só aparelhos sem toque (mouse/trackpad) → é desktop. */
 function isDesktopMode() {
-  try { return window.matchMedia('(min-width: 900px)').matches; } catch(e) { return false; }
+  try {
+    const ua = navigator.userAgent || navigator.vendor || '';
+
+    // Padrões clássicos de UA de celular/tablet
+    if (/android|iphone|ipod|ipad|iemobile|blackberry|opera mini|mobile|silk|kindle/i.test(ua)) {
+      return false;
+    }
+
+    // iPadOS 13+ mente no UA (aparece como "Macintosh"), mas tem toque
+    const temToque = (navigator.maxTouchPoints || 0) > 0 || ('ontouchstart' in window);
+    if (/macintosh/i.test(ua) && temToque) return false;
+
+    // Qualquer outro dispositivo com toque (tablets Android em modo
+    // desktop, Chromebooks touch, etc.) também libera o leitor
+    if (temToque) return false;
+
+    // Sem indício de toque/mobile → mantém como computador
+    return true;
+  } catch(e) { return false; }
 }
 
 /* ═══════════════════════════════════════════
@@ -6235,9 +6263,16 @@ const corr = {
   display: flex; align-items: center; justify-content: center;
   font-size: 18px; color: #fff; cursor: pointer; flex-shrink: 0;
 }
-.e4-cam-info { flex: 1; }
+.e4-cam-info { flex: 1; min-width: 0; }
 .e4-cam-prova { font-size: 13px; font-weight: 700; color: #fff; }
 .e4-cam-aluno { font-size: 11px; color: rgba(255,255,255,.7); margin-top: 2px; }
+.e4-cam-manual-btn {
+  font-size: 10.5px; font-weight: 700; color: #fff;
+  background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.35);
+  border-radius: 20px; padding: 8px 12px; white-space: nowrap;
+  cursor: pointer; flex-shrink: 0; -webkit-tap-highlight-color: transparent;
+}
+.e4-cam-manual-btn:active { background: rgba(255,255,255,.15); }
 
 /* Processando */
 .e4-processing {
@@ -6266,6 +6301,13 @@ const corr = {
 }
 .e4-conf-title  { font-size: 16px; font-weight: 800; color: var(--text); flex: 1; }
 .e4-conf-sub    { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.e4-conf-manual-btn {
+  font-size: 10px; font-weight: 800; color: var(--red);
+  border: 1.5px solid var(--red); border-radius: 20px; padding: 7px 10px;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0; letter-spacing: .02em;
+  -webkit-tap-highlight-color: transparent;
+}
+.e4-conf-manual-btn:active { background: rgba(227,27,35,.1); }
 .e4-conf-body   { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0; }
 
 /* Imagem do cartão com overlay de bolhas */
@@ -6296,7 +6338,7 @@ const corr = {
 .e4-q-det  { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; flex-shrink: 0; }
 .e4-q-det.ok    { background: var(--green); color: #000; }
 .e4-q-det.wrong { background: var(--red); color: #fff; }
-.e4-q-det.vazia { background: var(--surface3); color: var(--text-dim); }
+.e4-q-det.vazia { background: rgba(227,27,35,.18); color: var(--red); }
 .e4-q-det.dupla { background: var(--yellow); color: #000; }
 .e4-q-det.anulada { background: var(--surface3); color: var(--text-dim); }
 .e4-q-det.revisada { background: var(--cyan); color: var(--navy); }
@@ -6344,6 +6386,7 @@ const corr = {
 .e4-alt-btn:active { transform: scale(.9); }
 .e4-alt-btn.detected { border-color: var(--yellow); color: var(--yellow); background: rgba(253,185,19,.1); }
 .e4-alt-btn.correta  { border-color: var(--cyan); color: var(--cyan); background: rgba(0,168,232,.1); }
+.e4-alt-btn.vazia    { border-color: var(--red); color: var(--red); background: rgba(227,27,35,.08); }
 .e4-alt-btn.anular   { border-color: var(--red); color: var(--red); background: rgba(227,27,35,.1); min-width: 100%; max-width: none; height: 40px; border-radius: var(--r-md); font-size: 13px; }
   `;
   document.head.appendChild(style);
@@ -6492,6 +6535,7 @@ function abrirCamera() {
         <div class="e4-cam-prova">${escapeHtml(corr.prova.nome)}</div>
         <div class="e4-cam-aluno"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> ${escapeHtml(corr.aluno.nome)}</div>
       </div>
+      <div class="e4-cam-manual-btn" onclick="abrirMarcacaoManual()">Marcar manualmente</div>
     </div>
 
     <div class="e4-guide">
@@ -6872,6 +6916,7 @@ function mostrarErroProcessamento(msg) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.9V17h8v-2.1A7 7 0 0 0 12 2z"/></svg> <strong>Dicas:</strong> iluminação uniforme, cartão completamente dentro do guia, câmera estabilizada.
     </div>
     <button class="btn btn-cyan" onclick="closeModal();abrirCamera()">Tentar novamente</button>
+    <button class="btn btn-ghost" onclick="closeModal();abrirMarcacaoManual()">Marcar manualmente</button>
     <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
   `);
 }
@@ -6879,11 +6924,16 @@ function mostrarErroProcessamento(msg) {
 /* ══════════════════════════════════════
    PASSO 4 — TELA DE CONFERÊNCIA
 ══════════════════════════════════════ */
+/* warpedCanvas pode vir null quando a correção é feita em modo manual
+   (sem foto) — nesse caso não existe imagem do cartão pra mostrar,
+   só a lista de questões, e o professor marca tudo na mão. */
 function mostrarConferencia(warpedCanvas, resultado) {
   const prova = corr.prova;
   const nQ    = prova.numQuestoes;
   const nA    = prova.numAlternativas || 5;
   const letras = 'ABCDE'.slice(0, nA).split('');
+
+  window._warpedCanvas = warpedCanvas || null;
 
   // Monta overlay de conferência
   const overlay = document.createElement('div');
@@ -6891,17 +6941,20 @@ function mostrarConferencia(warpedCanvas, resultado) {
   overlay.id = 'e4-conf-overlay';
   document.body.appendChild(overlay);
 
-  // Renderiza overlay de bolhas na imagem
-  const displayCanvas = document.createElement('canvas');
-  displayCanvas.width  = warpedCanvas.width;
-  displayCanvas.height = warpedCanvas.height;
-  const dCtx = displayCanvas.getContext('2d');
-  dCtx.drawImage(warpedCanvas, 0, 0);
-  desenharOverlayBolhas(dCtx, resultado);
+  // Renderiza overlay de bolhas na imagem (só quando há foto)
+  let imgWrap = null;
+  if (warpedCanvas) {
+    const displayCanvas = document.createElement('canvas');
+    displayCanvas.width  = warpedCanvas.width;
+    displayCanvas.height = warpedCanvas.height;
+    const dCtx = displayCanvas.getContext('2d');
+    dCtx.drawImage(warpedCanvas, 0, 0);
+    desenharOverlayBolhas(dCtx, resultado);
 
-  const imgWrap = document.createElement('div');
-  imgWrap.className = 'e4-img-wrap';
-  imgWrap.appendChild(displayCanvas);
+    imgWrap = document.createElement('div');
+    imgWrap.className = 'e4-img-wrap';
+    imgWrap.appendChild(displayCanvas);
+  }
 
   // Lista de questões
   const qList = document.createElement('div');
@@ -6913,10 +6966,11 @@ function mostrarConferencia(warpedCanvas, resultado) {
   header.className = 'e4-conf-header';
   header.innerHTML = `
     <div class="wizard-back-btn" onclick="descartarConferencia()">←</div>
-    <div>
+    <div style="flex:1;min-width:0">
       <div class="e4-conf-title">${escapeHtml(corr.aluno.nome)}</div>
-      <div class="e4-conf-sub">${escapeHtml(prova.nome)} · Confira e corrija se necessário</div>
+      <div class="e4-conf-sub">${escapeHtml(prova.nome)} · ${corr.manual ? 'Marcação manual — toque em cada questão para preencher' : 'Confira e corrija se necessário'}</div>
     </div>
+    ${ !corr.manual ? `<div class="e4-conf-manual-btn" onclick="confirmarMarcacaoManual()" title="A leitura não ficou boa? Marque as respostas manualmente">MARCAR MANUALMENTE</div>` : '' }
   `;
 
   // Footer
@@ -6927,7 +6981,7 @@ function mostrarConferencia(warpedCanvas, resultado) {
   overlay.appendChild(header);
   const body = document.createElement('div');
   body.className = 'e4-conf-body';
-  body.appendChild(imgWrap);
+  if (imgWrap) body.appendChild(imgWrap);
   body.appendChild(qList);
   overlay.appendChild(body);
   overlay.appendChild(footer);
@@ -6936,14 +6990,62 @@ function mostrarConferencia(warpedCanvas, resultado) {
   renderNota();
 }
 
+/* ── Marcação manual: usada quando a leitura por foto não ficou boa
+   ou o professor percebe alguma inconsistência na conferência ── */
+function abrirMarcacaoManual() {
+  if (corr.stream) { corr.stream.getTracks().forEach(t => t.stop()); corr.stream = null; }
+  document.getElementById('e4-cam-overlay')?.remove();
+  ativarMarcacaoManual();
+}
+
+function confirmarMarcacaoManual() {
+  showModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">Marcar manualmente?</div>
+    <div style="font-size:14px;color:var(--text-muted);line-height:1.5">A leitura automática desta prova será descartada. Todas as questões ficarão em branco (nota zero) até você marcar cada uma manualmente.</div>
+    <button class="btn btn-danger" onclick="closeModal();ativarMarcacaoManual()">Marcar manualmente</button>
+    <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+  `);
+}
+
+function ativarMarcacaoManual() {
+  corr.manual   = true;
+  corr.detected = {};
+  corr.duplas   = [];
+  corr.revisao  = {};
+  window._warpedCanvas = null;
+  document.getElementById('e4-conf-overlay')?.remove();
+  mostrarConferencia(null, { respostas: {}, duplas: [] });
+}
+
 function descartarConferencia() {
   showModal(`
     <div class="modal-handle"></div>
     <div class="modal-title">Descartar correção?</div>
     <div style="font-size:14px;color:var(--text-muted)">Os dados da leitura serão perdidos.</div>
-    <button class="btn btn-danger" onclick="closeModal();document.getElementById('e4-conf-overlay')?.remove()">Sim, descartar</button>
+    <button class="btn btn-danger" onclick="confirmarDescarteConferencia()">Sim, descartar</button>
     <button class="btn btn-ghost" onclick="closeModal()">Continuar revisando</button>
   `);
+}
+
+/* Ao descartar, além de fechar a tela de conferência, volta direto pra
+   lista de alunos da mesma turma — igual acontece depois de salvar —
+   pra o professor já poder escolher outro aluno e seguir corrigindo. */
+function confirmarDescarteConferencia() {
+  closeModal();
+  document.getElementById('e4-conf-overlay')?.remove();
+
+  corr.alunoId  = null;
+  corr.aluno    = null;
+  corr.detected = {};
+  corr.duplas   = [];
+  corr.revisao  = {};
+  corr.manual   = false;
+  window._warpedCanvas = null;
+
+  if (corr.turmaId && (cache.alunos || []).some(a => a.turmaId === corr.turmaId)) {
+    abrirSeletorAlunoCorrecao();
+  }
 }
 
 function renderQList() {
@@ -7094,6 +7196,11 @@ function abrirSeletorAlt(q) {
   const revisada  = corr.revisao[q];
   const dupla     = corr.duplas.includes(q);
 
+  // Questão sem NENHUMA marcação (nem leitura, nem dupla, nem revisão manual)
+  // — todas as alternativas ficam com quadro vermelho, deixando claro que
+  // nada foi marcado e que a questão vale zero.
+  const semMarcacao = !detectada && !dupla && revisada === undefined;
+
   const sheet = document.createElement('div');
   sheet.className = 'e4-alt-modal';
   sheet.id = 'e4-alt-modal';
@@ -7103,7 +7210,12 @@ function abrirSeletorAlt(q) {
     const isDetected = detectada === alt || (dupla && alt === detectada);
     const isCorreta  = gabarito === alt;
     const isRev      = revisada === alt;
-    const cls = isRev ? 'detected' : isDetected ? 'detected' : isCorreta ? 'correta' : '';
+    let cls;
+    if (isRev) cls = 'detected';
+    else if (isDetected) cls = 'detected';
+    else if (semMarcacao) cls = 'vazia';
+    else if (isCorreta) cls = 'correta';
+    else cls = '';
     return `<div class="e4-alt-btn ${cls}" onclick="aplicarRevisao(${q},'${alt}')">${alt}</div>`;
   }).join('');
 
@@ -7111,6 +7223,7 @@ function abrirSeletorAlt(q) {
     <div class="e4-alt-sheet">
       <div class="e4-alt-title">Questão ${q}</div>
       <div class="e4-alt-sub">Gabarito: <strong style="color:var(--cyan)">${gabarito || '—'}</strong> · Detectada: <strong style="color:var(--yellow)">${detectada || 'nenhuma'}</strong>${revisada !== undefined ? ` · Revisão: <strong style="color:var(--cyan)">${revisada === 'ANULADA' ? 'Anulada' : revisada}</strong>` : ''}</div>
+      ${semMarcacao ? `<div style="font-size:12px;font-weight:700;color:var(--red);margin:-8px 0 12px">Nenhuma alternativa foi marcada — questão valendo zero</div>` : ''}
       <div class="e4-alt-grid">${btns}</div>
       <div class="e4-alt-btn anular" onclick="aplicarRevisao(${q},'ANULADA')">✕ Anular esta questão</div>
       ${revisada !== undefined ? `<div class="e4-alt-btn" style="border-color:var(--border);color:var(--text-muted);margin-top:8px;min-width:100%;max-width:none;height:40px;border-radius:var(--r-md);font-size:13px" onclick="removerRevisao(${q})">↩ Usar resultado detectado</div>` : ''}
