@@ -1448,6 +1448,14 @@ async function salvarProva() {
       escopo: isGestor() ? 'escola' : (d.escopo || 'proprio'),
       multidisciplinar: d.multidisciplinar || false,
       disciplinasConfig: d.multidisciplinar ? d.disciplinasConfig : [],
+      // Lista simples (só UIDs) dos professores responsáveis por alguma
+      // disciplina — usada pelas regras de segurança do Firestore, que não
+      // conseguem checar um campo dentro de uma lista de objetos como
+      // disciplinasConfig. Mantém sincronizada com disciplinasConfig sempre
+      // que a prova é criada ou editada.
+      disciplinasProfessorUids: d.multidisciplinar
+        ? [...new Set((d.disciplinasConfig || []).map(dc => dc.professorUid).filter(Boolean))]
+        : [],
       professoresDestinatarios: isGestor() ? (d.professoresDestinatarios || []) : [],
     };
     if (wizard.editId) {
