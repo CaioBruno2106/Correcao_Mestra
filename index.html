@@ -5577,8 +5577,7 @@ async function continuarImportacaoNM() {
   _impNM.envioAnteriorStatus = null;
   if (envioAnterior?.nmDocId) {
     try {
-      const snap = await nmDb.collection('users').doc(nmLink.user.uid)
-        .collection('turmas').doc(_impNM.turmaId)
+      const snap = await turmaRefNM(turmaDestino)
         .collection('importsPendentes').doc(envioAnterior.nmDocId).get();
       _impNM.envioAnteriorStatus = snap.exists ? (snap.data().status || 'pendente') : 'excluido';
     } catch (e) {
@@ -5712,6 +5711,20 @@ function renderConfirmacaoImportacaoNM() {
    unidade/tipo), só pra avisar — não bloqueia — se tentar de novo.
 ═══════════════════════════════════════════════════════════════ */
 
+/* Resolve a referência da turma no Firestore do Nota Mestra — pessoal
+   (users/{uid}/turmas) ou vinculada a uma escola compartilhada
+   (escolas/{escolaId}/turmas). Espelha o turmaPath() que já existe do
+   lado do Nota Mestra; sem isso, envios pra turmas de escola iam pro
+   lugar errado e nunca apareciam pro professor lá. */
+function turmaRefNM(turmaDestino) {
+  if (turmaDestino.escolaVinculadaId) {
+    return nmDb.collection('escolas').doc(turmaDestino.escolaVinculadaId)
+      .collection('turmas').doc(turmaDestino.id);
+  }
+  return nmDb.collection('users').doc(nmLink.user.uid)
+    .collection('turmas').doc(turmaDestino.id);
+}
+
 async function confirmarEnvioNM() {
   const prova        = (cache.provas || []).find(p => p.id === _impNM.provaId);
   const turmaDestino = nmLink.turmas.find(t => t.id === _impNM.turmaId);
@@ -5738,8 +5751,7 @@ async function confirmarEnvioNM() {
       criadoEm:      firebase.firestore.FieldValue.serverTimestamp()
     };
 
-    const docRef = await nmDb.collection('users').doc(nmLink.user.uid)
-      .collection('turmas').doc(turmaDestino.id)
+    const docRef = await turmaRefNM(turmaDestino)
       .collection('importsPendentes').add(payload);
 
     // Marca na própria prova (no Leitor) que essa combinação já foi enviada —
