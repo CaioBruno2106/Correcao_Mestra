@@ -36,37 +36,47 @@ async function loadCache(force = false) {
     const tasks = [];
     if (force || !cache.turmas) tasks.push(ref.turmas().orderBy('nome').get().then(s => cache.turmas = s.docs.map(d => ({ id: d.id, ...d.data() }))));
     if (force || !cache.alunos) tasks.push(ref.alunos().orderBy('nome').get().then(s => cache.alunos = s.docs.map(d => ({ id: d.id, ...d.data() }))));
-    if (force || !cache.provas) tasks.push(
-      ref.provas().orderBy('criadoEm','desc').get().then(s => {
-        const uid = app.user?.uid;
-        const gestor = isGestor();
-        cache.provas = s.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(p => {
-            // Se não está mostrando arquivadas, oculta as arquivadas
-            if (!_showArquivadas && p.arquivada) return false;
-            // Gestor: vê provas da escola (escopo='escola') mas NÃO as particulares de professores
-            if (gestor) return p.escopo !== 'proprio';
-            // Professor: vê suas próprias + as da escola
-            if (p.escopo === 'escola' || p.criadoPor === uid) {
-              // Verifica se professor está na lista de destinatários ([] = todos)
-              const dest = p.professoresDestinatarios;
-              if (Array.isArray(dest) && dest.length > 0 && !dest.includes(uid) && p.criadoPor !== uid) return false;
-              return true;
-            }
-            // Professor responsável por disciplina em prova multidisciplinar
-            if (p.multidisciplinar && Array.isArray(p.disciplinasConfig)) {
-              return p.disciplinasConfig.some(dc => dc.professorUid === uid);
-            }
-            return false;
-          });
-      })
-    );
+    if (force || !cache.provas) tasks.push(carregarProvas());
     await Promise.all(tasks);
   } catch (e) {
     console.warn('loadCache', e);
     cache.turmas ??= []; cache.alunos ??= []; cache.provas ??= [];
   }
+}
+
+// Busca as provas com consultas que já batem com a regra de segurança,
+// em vez de um único .get() sem filtro. O Firestore não permite listar
+// uma coleção inteira quando a regra depende de campos do documento
+// (como criadoPor) sem um where() correspondente — ele não consegue
+// garantir, só pela consulta, que TODO documento retornado respeitaria
+// a regra, e nega a consulta inteira ("regras de segurança não são
+// filtros"). Então fazemos uma consulta por "motivo de visibilidade" e
+// juntamos os resultados aqui, removendo duplicatas.
+async function carregarProvas() {
+  const uid = app.user?.uid;
+  const gestor = isGestor();
+  const porId = new Map();
+  const addDocs = snap => snap.docs.forEach(d => {
+    if (!porId.has(d.id)) porId.set(d.id, { id: d.id, ...d.data() });
+  });
+
+  if (gestor) {
+    // Gestor: vê provas de escopo diferente de "proprio"
+    addDocs(await ref.provas().where('escopo', '!=', 'proprio').get());
+  } else {
+    // Provas que eu criei (cobre escopo "proprio" e "escola" próprias)
+    addDocs(await ref.provas().where('criadoPor', '==', uid).get());
+    // Provas de escopo "escola" sem lista de destinatários (visível a todos)
+    addDocs(await ref.provas().where('escopo', '==', 'escola').where('professoresDestinatarios', '==', []).get());
+    // Provas de escopo "escola" com lista de destinatários que me incluem
+    addDocs(await ref.provas().where('professoresDestinatarios', 'array-contains', uid).get());
+    // Provas multidisciplinares em que sou responsável por alguma disciplina
+    addDocs(await ref.provas().where('disciplinasProfessorUids', 'array-contains', uid).get());
+  }
+
+  cache.provas = Array.from(porId.values())
+    .filter(p => _showArquivadas || !p.arquivada)
+    .sort((a, b) => (b.criadoEm?.toMillis?.() ?? 0) - (a.criadoEm?.toMillis?.() ?? 0));
 }
 
 function escapeHtml(s) {
@@ -7960,8 +7970,23 @@ async function loadResultados(force = false) {
   if (!app.escolaId) return [];
   if (!force && cacheRes.items) return cacheRes.items;
   try {
-    const snap = await ref.resultados().get();
-    cacheRes.items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const uid = app.user?.uid;
+    const gestor = isGestor();
+    const porId = new Map();
+    const addDocs = snap => snap.docs.forEach(d => {
+      if (!porId.has(d.id)) porId.set(d.id, { id: d.id, ...d.data() });
+    });
+
+    if (gestor) {
+      addDocs(await ref.resultados().where('provaEscopo', '!=', 'proprio').get());
+    } else {
+      addDocs(await ref.resultados().where('provaCriadoPor', '==', uid).get());
+      addDocs(await ref.resultados().where('provaEscopo', '==', 'escola').where('provaProfessoresDestinatarios', '==', []).get());
+      addDocs(await ref.resultados().where('provaProfessoresDestinatarios', 'array-contains', uid).get());
+      addDocs(await ref.resultados().where('provaDisciplinasProfessorUids', 'array-contains', uid).get());
+    }
+
+    cacheRes.items = Array.from(porId.values());
   } catch (e) {
     console.warn('loadResultados', e);
     cacheRes.items = [];
