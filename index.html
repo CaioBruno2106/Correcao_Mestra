@@ -3784,6 +3784,10 @@ auth.onAuthStateChanged(async (user) => {
     return;
   }
   app.user = user;
+  // Renova o token (pega custom claims novas de escolaId/role na hora,
+  // em vez de esperar a renovação automática de até 1h). Chamada
+  // gratuita, não usa Cloud Functions nem custa nada.
+  try { await user.getIdToken(true); } catch(_) {}
   // Verificar se professor já tem escola vinculada
   try {
     const profDoc = await db.collection('professores').doc(user.uid).get();
