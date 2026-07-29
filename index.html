@@ -977,8 +977,8 @@ function wizardStep1() {
       <div class="input-group">
         <label class="input-label">Modelo da avaliação</label>
         <div class="segmented" id="w-caed-seg">
-          <div class="seg ${d.tipoAvaliacao!=='simuladoCAED'?'active':''}" data-val="normal" onclick="segPick(this);wizard.data.tipoAvaliacao=this.dataset.val;renderWizard()">Prova normal</div>
-          <div class="seg ${d.tipoAvaliacao==='simuladoCAED'?'active':''}" data-val="simuladoCAED" onclick="segPick(this);wizard.data.tipoAvaliacao=this.dataset.val;renderWizard()">Simulado CAED</div>
+          <div class="seg ${d.tipoAvaliacao!=='simuladoCAED'?'active':''}" data-val="normal" onclick="segPick(this);wizard.data.tipoAvaliacao=this.dataset.val;if(!wizard.data.bimestre)wizard.data.bimestre='1';renderWizard()">Prova normal</div>
+          <div class="seg ${d.tipoAvaliacao==='simuladoCAED'?'active':''}" data-val="simuladoCAED" onclick="segPick(this);wizard.data.tipoAvaliacao=this.dataset.val;wizard.data.bimestre='';renderWizard()">Simulado CAED</div>
         </div>
         <div style="font-size:12px;color:var(--text-muted);margin-top:6px;line-height:1.5">
           ${ d.tipoAvaliacao==='simuladoCAED'
@@ -1038,12 +1038,18 @@ function wizardStep1() {
         </button>
         ${turmas.length===0 ? '<div style="font-size:12px;color:var(--yellow);margin-top:4px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Crie uma turma primeiro</div>' : ''}
       </div>
+      ${ d.tipoAvaliacao !== 'simuladoCAED' ? `
       <div class="input-group">
         <label class="input-label">Unidade letiva</label>
         <div class="segmented" id="w-bim-seg">
           ${['1','2','3','4'].map(o => `<div class="seg ${d.bimestre===o?'active':''}" data-val="${o}" onclick="segPick(this); wizard.data.bimestre=this.dataset.val">${o}ª</div>`).join('')}
         </div>
-      </div>
+      </div>` : `
+      <div class="input-group">
+        <div style="font-size:12px;color:var(--text-muted);background:rgba(253,185,19,0.08);border:1px solid rgba(253,185,19,0.25);border-radius:var(--r-md);padding:10px 12px;line-height:1.5">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.9V17h8v-2.1A7 7 0 0 0 12 2z"/></svg> Simulado CAED não é vinculado a nenhuma unidade letiva — ele fica separado, na aba de Simulados.
+        </div>
+      </div>` }
       <div class="input-group">
         <label class="input-label">Ano letivo</label>
         <input class="input" id="w-ano" type="text" maxlength="9"
@@ -1601,7 +1607,7 @@ async function abrirProva(id) {
     <div style="padding:0 16px 10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
       <span class="badge badge-cyan">${escapeHtml(p.disciplina||'')}</span>
       <span class="badge badge-blue">${escapeHtml(turmaNome)}</span>
-      <span class="badge badge-yellow">${escapeHtml(p.bimestre||'1')}ª unidade</span>
+      ${ p.bimestre ? `<span class="badge badge-yellow">${escapeHtml(p.bimestre)}ª unidade</span>` : '' }
       ${ p.tipoAvaliacao==='simuladoCAED' ? '<span class="badge badge-yellow" style="background:rgba(253,185,19,0.22)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.9V17h8v-2.1A7 7 0 0 0 12 2z"/></svg> Simulado CAED</span>' : '' }
       ${ p.escopo === 'escola'
         ? '<span class="badge badge-cyan" style="background:rgba(0,168,232,0.15)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="9" y1="22" x2="9" y2="12"/><line x1="15" y1="22" x2="15" y2="12"/><line x1="9" y1="7" x2="9.01" y2="7"/><line x1="15" y1="7" x2="15.01" y2="7"/></svg> Escola</span>'
@@ -1697,7 +1703,7 @@ function editarProva(id) {
     nome: p.nome || '',
     disciplina: p.disciplina || '',
     turmaIds: provaTurmaIds(p),
-    bimestre: p.bimestre || '1',
+    bimestre: p.bimestre || (p.tipoAvaliacao === 'simuladoCAED' ? '' : '1'),
     anoLetivo: p.anoLetivo || String(new Date().getFullYear()),
     numQuestoes: p.numQuestoes || 10,
     numAlternativas: p.numAlternativas || 5,
@@ -5921,6 +5927,242 @@ async function confirmarEnvioNM() {
     setLoading('btn-imp-nm-confirmar', false);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   INTEGRAÇÃO NOTA MESTRA — SIMULADOS CAED
+   Envio direto (mesmo mecanismo das Etapas 1-4 acima), mas sem
+   escolha de unidade letiva/atividade — simulados CAED não entram
+   no bimestre, vão direto pra aba "Simulados CAED" do Nota Mestra.
+   Envia nota E nível de proficiência de cada aluno.
+═══════════════════════════════════════════════════════════════ */
+const _impCAED = { provaId: null, turmaId: null, origemTurmaId: null, pares: [] };
+
+async function abrirImportacaoCAEDNM(provaId) {
+  if (!nmLink.user) {
+    showModal(`
+      <div class="modal-handle"></div>
+      <div class="modal-title">Conectar ao Nota Mestra</div>
+      <div class="nm-msg info" style="margin-bottom:10px">
+        Pra enviar o simulado direto, primeiro conecte sua conta do Nota Mestra (mesmo login que você usa lá).
+      </div>
+      <button class="btn btn-cyan" onclick="closeModal();abrirConexaoNM()">Conectar agora</button>
+      <button class="btn btn-ghost" style="margin-top:8px" onclick="closeModal()">Cancelar</button>
+    `);
+    return;
+  }
+  if (!nmLink.turmas.length) {
+    showModal(`
+      <div class="modal-handle"></div>
+      <div class="modal-title">Nenhuma turma encontrada</div>
+      <div class="nm-msg error" style="margin-bottom:10px">
+        Não encontramos nenhuma turma no Nota Mestra pra essa conta. Verifique se entrou com o login certo ou tente atualizar.
+      </div>
+      <button class="btn btn-cyan" onclick="closeModal();abrirConexaoNM()">Ver conexão</button>
+      <button class="btn btn-ghost" style="margin-top:8px" onclick="closeModal()">Cancelar</button>
+    `);
+    return;
+  }
+
+  await loadCache();
+  const prova = (cache.provas || []).find(p => p.id === provaId);
+  if (!prova) { toast('Simulado não encontrado', 'error'); return; }
+
+  await loadResultados();
+  const temResultado = (cacheRes.items || []).some(r => r.provaId === prova.id);
+  if (!temResultado) { toast('Esse simulado ainda não tem nenhuma correção lançada', 'error'); return; }
+
+  const turmaIdsProva = provaTurmaIds(prova);
+  _impCAED.provaId       = provaId;
+  _impCAED.origemTurmaId = turmaIdsProva.length ? turmaIdsProva[0] : ((cache.turmas || [])[0]?.id || null);
+  _impCAED.turmaId       = nmLink.turmas[0].id;
+  _impCAED.pares         = [];
+
+  renderFormImportacaoCAEDNM();
+}
+
+function renderFormImportacaoCAEDNM() {
+  const prova = (cache.provas || []).find(p => p.id === _impCAED.provaId);
+  const turma = nmLink.turmas.find(t => t.id === _impCAED.turmaId);
+  if (!prova || !turma) { closeModal(); toast('Erro ao montar formulário de envio', 'error'); return; }
+
+  const turmaIdsProva = provaTurmaIds(prova);
+  const origensPossiveis = turmaIdsProva.length
+    ? turmaIdsProva.map(id => (cache.turmas || []).find(t => t.id === id)).filter(Boolean)
+    : (cache.turmas || []);
+  const precisaEscolherOrigem = origensPossiveis.length > 1;
+
+  const origemPicker = precisaEscolherOrigem ? `
+    <div class="input-group">
+      <label class="input-label">Turma de origem (Correção Mestra)</label>
+      <select class="input" id="imp-caed-origem" onchange="_impCAED.origemTurmaId=this.value">
+        ${origensPossiveis.map(t => `
+          <option value="${t.id}" ${t.id === _impCAED.origemTurmaId ? 'selected' : ''}>${escapeHtml(t.nome)}</option>
+        `).join('')}
+      </select>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+        Esse simulado foi aplicado em mais de uma turma. Escolha de qual turma vêm os alunos.
+      </div>
+    </div>` : '';
+
+  showModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">Enviar simulado para o Nota Mestra</div>
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">${escapeHtml(prova.nome)}</div>
+    ${origemPicker}
+    <div class="input-group">
+      <label class="input-label">Turma de destino (Nota Mestra)</label>
+      <select class="input" id="imp-caed-turma" onchange="_impCAED.turmaId=this.value">
+        ${nmLink.turmas.map(t => `
+          <option value="${t.id}" ${t.id === _impCAED.turmaId ? 'selected' : ''}>
+            ${escapeHtml(t.nome)}${t.disciplina ? ' · ' + escapeHtml(t.disciplina) : ''}${t.escolaVinculadaNome ? ' — ' + escapeHtml(t.escolaVinculadaNome) : ''}
+          </option>
+        `).join('')}
+      </select>
+    </div>
+    <div class="nm-msg info" style="margin-top:6px">
+      Esse simulado vai direto pra aba "Simulados CAED" do Nota Mestra, com a nota e o nível de proficiência de cada aluno — sem entrar em nenhuma unidade letiva.
+    </div>
+    <button class="btn btn-cyan" style="margin-top:10px" onclick="continuarImportacaoCAEDNM()">Continuar →</button>
+    <button class="btn btn-ghost" style="margin-top:8px" onclick="closeModal()">Cancelar</button>
+  `);
+}
+
+async function continuarImportacaoCAEDNM() {
+  const prova = (cache.provas || []).find(p => p.id === _impCAED.provaId);
+  const turmaDestino = nmLink.turmas.find(t => t.id === _impCAED.turmaId);
+  if (!prova || !turmaDestino || !_impCAED.origemTurmaId) {
+    toast('Erro ao montar a confirmação', 'error');
+    return;
+  }
+
+  await loadCache();
+  await loadResultados();
+
+  const alunosOrigem = (cache.alunos || []).filter(a => a.turmaId === _impCAED.origemTurmaId);
+  const alunosDestino = (turmaDestino.alunos || []).filter(Boolean);
+
+  const resPorAluno = {};
+  (cacheRes.items || []).forEach(r => { if (r.provaId === prova.id) resPorAluno[r.alunoId] = r; });
+
+  const pares = alunosOrigem.map(a => {
+    const r = resPorAluno[a.id];
+    const nota10 = r && r.notaMax ? parseFloat(((r.nota / r.notaMax) * 10).toFixed(2)) : null;
+    const nivel = r?.nivelInfo?.nivelAtingido || null;
+
+    const nNorm = _normNomeNM(a.nome);
+    const matchIdx = alunosDestino.findIndex(ad => _normNomeNM(ad.nome) === nNorm);
+
+    return {
+      alunoOrigemId: a.id,
+      nomeOrigem: a.nome,
+      nota10,
+      nivel,
+      matchIdx,
+      nomeDestino: matchIdx >= 0 ? alunosDestino[matchIdx].nome : null
+    };
+  });
+
+  _impCAED.pares = pares;
+  renderConfirmacaoImportacaoCAEDNM();
+}
+
+function renderConfirmacaoImportacaoCAEDNM() {
+  const prova = (cache.provas || []).find(p => p.id === _impCAED.provaId);
+  const turmaDestino = nmLink.turmas.find(t => t.id === _impCAED.turmaId);
+  const pares = _impCAED.pares || [];
+
+  const casados      = pares.filter(p => p.matchIdx >= 0);
+  const naoCasados    = pares.filter(p => p.matchIdx < 0);
+  const enviaveis     = casados.filter(p => p.nota10 !== null || p.nivel);
+
+  const linhas = pares.map(p => `
+    <tr>
+      <td style="font-size:.75rem;padding:4px 6px">${escapeHtml(p.nomeOrigem)}</td>
+      <td style="font-size:.75rem;padding:4px 6px;text-align:center;font-weight:700">
+        ${p.nota10 !== null ? p.nota10.toFixed(1) : '—'}
+      </td>
+      <td style="font-size:.75rem;padding:4px 6px;text-align:center">
+        ${p.nivel ? escapeHtml(NIVEIS_SAEB_LABEL[p.nivel]) : '—'}
+      </td>
+      <td style="font-size:.75rem;padding:4px 6px;text-align:center">
+        ${ p.matchIdx >= 0
+          ? `<span style="color:#4CD964;font-weight:700">✓ ${escapeHtml(p.nomeDestino)}</span>`
+          : `<span style="color:var(--red);font-size:.7rem">Não encontrado</span>` }
+      </td>
+    </tr>`).join('');
+
+  showModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">Confirmar envio</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
+      ${escapeHtml(prova?.nome || '')} → <strong>${escapeHtml(turmaDestino?.nome || '')}</strong> · Simulado CAED
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+      <span class="badge badge-cyan">${enviaveis.length} pronto(s) pra enviar</span>
+      ${ naoCasados.length ? `<span class="badge" style="background:rgba(227,27,35,0.15);color:var(--red)">${naoCasados.length} não encontrado(s)</span>` : '' }
+    </div>
+
+    <div style="max-height:44vh;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r-md)">
+      <table style="width:100%;border-collapse:collapse">
+        <thead style="position:sticky;top:0;background:var(--surface2)">
+          <tr>
+            <th style="font-size:.7rem;padding:4px 6px;text-align:left">Aluno (Correção Mestra)</th>
+            <th style="font-size:.7rem;padding:4px 6px;text-align:center">Nota</th>
+            <th style="font-size:.7rem;padding:4px 6px;text-align:center">Nível</th>
+            <th style="font-size:.7rem;padding:4px 6px;text-align:center">Casamento no Nota Mestra</th>
+          </tr>
+        </thead>
+        <tbody>${linhas || `<tr><td colspan="4" style="font-size:.75rem;padding:10px;text-align:center;color:var(--text-muted)">Nenhum aluno na turma de origem.</td></tr>`}</tbody>
+      </table>
+    </div>
+
+    ${ naoCasados.length ? `
+      <div class="nm-msg error" style="margin-top:8px">
+        ${naoCasados.length} aluno(s) não foram encontrados na turma do Nota Mestra (nome diferente?).
+        Eles não serão enviados nesta importação.
+      </div>` : '' }
+
+    <button class="btn btn-cyan" id="btn-imp-caed-confirmar" style="margin-top:10px" onclick="confirmarEnvioCAEDNM()"
+      ${ enviaveis.length ? '' : 'disabled' }>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg> Confirmar envio (${enviaveis.length} aluno${enviaveis.length === 1 ? '' : 's'})
+    </button>
+    <button class="btn btn-ghost" style="margin-top:8px" onclick="renderFormImportacaoCAEDNM()">‹ Voltar</button>
+  `);
+}
+
+async function confirmarEnvioCAEDNM() {
+  const prova        = (cache.provas || []).find(p => p.id === _impCAED.provaId);
+  const turmaDestino = nmLink.turmas.find(t => t.id === _impCAED.turmaId);
+  if (!prova || !turmaDestino) { toast('Erro ao confirmar envio', 'error'); return; }
+
+  const enviaveis = (_impCAED.pares || []).filter(p => p.matchIdx >= 0 && (p.nota10 !== null || p.nivel));
+  if (!enviaveis.length) { toast('Nenhum aluno pronto pra enviar', 'error'); return; }
+
+  setLoading('btn-imp-caed-confirmar', true);
+  try {
+    const payload = {
+      origem:       'simulado-caed',
+      provaId:      prova.id,
+      simuladoNome: prova.nome,
+      disciplina:   prova.disciplina || null,
+      data:         new Date().toISOString().slice(0, 10),
+      alunos:       enviaveis.map(p => ({ nome: p.nomeDestino, nota: p.nota10, nivel: p.nivel || '' })),
+      status:       'pendente',
+      enviadoPor:   nmLink.user.email || nmLink.user.uid || null,
+      criadoEm:     firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    await turmaRefNM(turmaDestino).collection('importsPendentes').add(payload);
+
+    toast(`${enviaveis.length} aluno(s) enviado(s) pro Nota Mestra! Confirme lá, na aba Simulados CAED, pra aplicar de verdade.`, 'success');
+    closeModal();
+  } catch (e) {
+    toast('Erro ao enviar pro Nota Mestra: ' + e.message, 'error');
+  } finally {
+    setLoading('btn-imp-caed-confirmar', false);
+  }
+}
 </script>
 
 <script>
@@ -7891,6 +8133,7 @@ function renderListaProvasExportNM() {
   const turmaId = _expNM.turmaId;
   const provasComResultado = (cache.provas || []).filter(p => {
     if (!provaTurmaIds(p).includes(turmaId)) return false;
+    if (p.tipoAvaliacao === 'simuladoCAED') return false; // simulados CAED usam o botão "Enviar para o Nota Mestra"
     return (cacheRes.items || []).some(r => r.provaId === p.id);
   });
 
@@ -7906,7 +8149,7 @@ function renderListaProvasExportNM() {
         <div class="mais-item" style="cursor:pointer" onclick="abrirFormExportacaoNM('${p.id}')">
           <div class="mais-item-text">
             <div class="mais-item-title">${escapeHtml(p.nome)}</div>
-            <div class="mais-item-sub">${escapeHtml(p.disciplina||'')} · ${p.bimestre||'1'}ª unidade</div>
+            <div class="mais-item-sub">${escapeHtml(p.disciplina||'')}${p.bimestre ? ` · ${p.bimestre}ª unidade` : (p.tipoAvaliacao==='simuladoCAED' ? ' · Simulado CAED' : '')}</div>
           </div>
           <div class="mais-item-arrow">›</div>
         </div>
@@ -8256,8 +8499,8 @@ async function abrirResultadosProva(provaId) {
       <div class="skel skel-card"></div>
     </div>
     <div style="padding:0 16px 32px">
-      <button class="btn btn-primary" style="width:100%" onclick="abrirImportacaoNM('${p.id}')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Importar para o Nota Mestra
+      <button class="btn btn-primary" style="width:100%" onclick="${ p.tipoAvaliacao==='simuladoCAED' ? `abrirImportacaoCAEDNM('${p.id}')` : `abrirImportacaoNM('${p.id}')` }">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> ${ p.tipoAvaliacao==='simuladoCAED' ? 'Enviar simulado para o Nota Mestra' : 'Importar para o Nota Mestra' }
       </button>
       <button class="btn btn-ghost" style="width:100%;margin-top:8px" onclick="abrirRecalculoPesos('${p.id}')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Recalcular com pesos atuais
