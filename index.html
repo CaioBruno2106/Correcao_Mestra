@@ -7475,6 +7475,17 @@ async function executarSalvar() {
       multidisciplinar: prova.multidisciplinar || false,
       notasPorDisciplina,
       professoresResponsaveis,
+      // Cópia dos campos de "dono/visibilidade" da prova, gravados direto
+      // no resultado. Isso existe pra regra de segurança do Firestore não
+      // precisar fazer um get() na prova-mãe pra CADA resultado avaliado
+      // numa listagem — com muitos resultados isso estourava o limite de
+      // acesso a documentos das regras e derrubava a consulta inteira,
+      // silenciosamente (sem erro visível no app). Mantenha sempre igual
+      // aos campos correspondentes da prova.
+      provaCriadoPor: prova.criadoPor || '',
+      provaEscopo: prova.escopo || 'proprio',
+      provaProfessoresDestinatarios: prova.professoresDestinatarios || [],
+      provaDisciplinasProfessorUids: prova.disciplinasProfessorUids || [],
     };
 
     // Verifica se já existe resultado para esse aluno/prova (sobrescreve)
