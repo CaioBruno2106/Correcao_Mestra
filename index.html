@@ -69,7 +69,7 @@ async function carregarProvas() {
     // Provas de escopo "escola" sem lista de destinatários (visível a todos)
     addDocs(await ref.provas().where('escopo', '==', 'escola').where('professoresDestinatarios', '==', []).get());
     // Provas de escopo "escola" com lista de destinatários que me incluem
-    addDocs(await ref.provas().where('professoresDestinatarios', 'array-contains', uid).get());
+    addDocs(await ref.provas().where('escopo', '==', 'escola').where('professoresDestinatarios', 'array-contains', uid).get());
     // Provas multidisciplinares em que sou responsável por alguma disciplina
     addDocs(await ref.provas().where('disciplinasProfessorUids', 'array-contains', uid).get());
   }
@@ -7982,7 +7982,7 @@ async function loadResultados(force = false) {
     } else {
       addDocs(await ref.resultados().where('provaCriadoPor', '==', uid).get());
       addDocs(await ref.resultados().where('provaEscopo', '==', 'escola').where('provaProfessoresDestinatarios', '==', []).get());
-      addDocs(await ref.resultados().where('provaProfessoresDestinatarios', 'array-contains', uid).get());
+      addDocs(await ref.resultados().where('provaEscopo', '==', 'escola').where('provaProfessoresDestinatarios', 'array-contains', uid).get());
       addDocs(await ref.resultados().where('provaDisciplinasProfessorUids', 'array-contains', uid).get());
     }
 
