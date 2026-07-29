@@ -4872,25 +4872,18 @@ async function loadDashStats() {
   try {
     const uid = app.user?.uid;
     const gestor = isGestor();
-    const [provasSnap, turmasSnap, alunosSnap, correcSnap] = await Promise.all([
-      db.collection('escolas').doc(app.escolaId).collection('provas').get(),
-      db.collection('escolas').doc(app.escolaId).collection('turmas').get(),
-      db.collection('escolas').doc(app.escolaId).collection('alunos').get(),
-      db.collection('escolas').doc(app.escolaId).collection('resultados').get()
-    ]);
-    // Gestor: vê provas da escola (escopo='escola'). Professor: vê as suas + escola
-    const provasFiltradas = provasSnap.docs.filter(d => {
-      const data = d.data();
-      if (gestor) return data.escopo !== 'proprio';
-      return data.escopo === 'escola' || data.criadoPor === uid;
-    });
-    const correcFiltradas = correcSnap.docs.filter(d => {
-      return gestor ? true : d.data().corrigidoPor === uid;
-    });
+    // Reaproveita as mesmas consultas (já filtradas certinho com where()
+    // batendo na regra de segurança) usadas no resto do app, em vez de
+    // repetir aqui um .get() sem filtro — que é exatamente o que dava
+    // "Missing or insufficient permissions" antes.
+    await loadCache();
+    const resultados = await loadResultados();
+    const correcFiltradas = gestor ? resultados : resultados.filter(r => r.corrigidoPor === uid);
+
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-    set('stat-provas',    provasFiltradas.length);
-    set('stat-turmas',    turmasSnap.size);
-    set('stat-alunos',    alunosSnap.size);
+    set('stat-provas',    (cache.provas || []).length);
+    set('stat-turmas',    (cache.turmas || []).length);
+    set('stat-alunos',    (cache.alunos || []).length);
     set('stat-correcoes', correcFiltradas.length);
   } catch { /* Coleções ainda não existem — normal no início */ }
 }
