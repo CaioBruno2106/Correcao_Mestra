@@ -873,7 +873,7 @@ async function renderProvas() {
         <div class="list-card-icon ${isEscola ? 'cyan' : 'yellow'}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="6" y="4" width="12" height="18" rx="2"/></svg></div>
         <div class="list-card-body">
           <div class="list-card-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            ${escapeHtml(p.nome)} ${badgeEscopo} ${badgeArq}
+            ${escapeHtml(p.nome)} ${p.tipoAvaliacao==='simuladoCAED' ? '<span class="badge badge-yellow" style="font-size:10px">Simulado CAED</span>' : ''} ${badgeEscopo} ${badgeArq}
           </div>
           <div class="list-card-sub">${meta}</div>
         </div>
@@ -881,6 +881,21 @@ async function renderProvas() {
       </div>`;
   }).join('');
 }
+
+/* ──────────── SIMULADOS CAED — níveis de proficiência ──────────── */
+// Ordem fixa: do mais elementar ao mais desejável. A ordem deste array
+// importa para o cálculo de nível do aluno (ver calcularNivelProficiencia).
+const NIVEIS_SAEB = ['elementarI', 'elementarII', 'basico', 'desejavel'];
+const NIVEIS_SAEB_LABEL = {
+  elementarI:  'Elementar I',
+  elementarII: 'Elementar II',
+  basico:      'Básico',
+  desejavel:   'Desejável',
+};
+// Percentual mínimo de acerto (já com o desconto de inconsistência aplicado)
+// para considerar que o aluno "domina" um nível. Valor provisório — único
+// lugar do código onde isso precisa ser alterado.
+const CORTE_DOMINIO_NIVEL = 0.60;
 
 /* ──────────── WIZARD DE PROVA (4 passos) ──────────── */
 const wizard = {
@@ -907,6 +922,9 @@ function iniciarWizardProva() {
     disciplinasConfig: [], // [{ nome, questaoInicio, questaoFim, professorUid }]
     // Destinatários (gestão pode restringir quais professores veem a prova)
     professoresDestinatarios: [], // [] = todos; [uid,...] = apenas estes
+    // Simulados CAED
+    tipoAvaliacao: 'normal', // 'normal' | 'simuladoCAED'
+    niveisQuestoes: {},      // { 1:'elementarI', 2:'basico', ... } — só quando simuladoCAED
   };
   if (isGestor()) {
     carregarEquipe().then(() => renderWizard()); // pré-carrega professores e re-renderiza
@@ -954,6 +972,19 @@ function wizardStep1() {
         <input class="input" id="w-nome" type="text" maxlength="60"
                placeholder="Ex: Prova 1 — Funções" value="${escapeHtml(d.nome)}"
                oninput="wizard.data.nome=this.value; w1Check()">
+      </div>
+
+      <div class="input-group">
+        <label class="input-label">Modelo da avaliação</label>
+        <div class="segmented" id="w-caed-seg">
+          <div class="seg ${d.tipoAvaliacao!=='simuladoCAED'?'active':''}" data-val="normal" onclick="segPick(this);wizard.data.tipoAvaliacao=this.dataset.val;renderWizard()">Prova normal</div>
+          <div class="seg ${d.tipoAvaliacao==='simuladoCAED'?'active':''}" data-val="simuladoCAED" onclick="segPick(this);wizard.data.tipoAvaliacao=this.dataset.val;renderWizard()">Simulado CAED</div>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:6px;line-height:1.5">
+          ${ d.tipoAvaliacao==='simuladoCAED'
+            ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.9V17h8v-2.1A7 7 0 0 0 12 2z"/></svg> No passo do gabarito você também vai marcar o nível de cada questão (Elementar I, Elementar II, Básico, Desejável). O relatório mostrará o nível de proficiência de cada aluno.'
+            : 'Prova comum, sem classificação por nível de proficiência.' }
+        </div>
       </div>
 
       ${ isGestor() ? `
@@ -1331,15 +1362,22 @@ function wizardGoStep3() {
   const novo = {};
   for (let q=1; q<=d.numQuestoes; q++) novo[q] = d.gabarito[q] || '';
   d.gabarito = novo;
+  if (d.tipoAvaliacao === 'simuladoCAED') {
+    const novoNiv = {};
+    for (let q=1; q<=d.numQuestoes; q++) novoNiv[q] = d.niveisQuestoes?.[q] || '';
+    d.niveisQuestoes = novoNiv;
+  }
   wizardNext();
 }
 
-/* Passo 3 — gabarito clicável */
+/* Passo 3 — gabarito clicável (+ nível, quando for Simulado CAED) */
 function wizardStep3() {
   const d = wizard.data;
   const letras = 'ABCDE'.slice(0, d.numAlternativas).split('');
   const total = d.numQuestoes;
   const marcadas = Object.values(d.gabarito).filter(Boolean).length;
+  const isCAED = d.tipoAvaliacao === 'simuladoCAED';
+  const niveisMarcados = isCAED ? Object.values(d.niveisQuestoes || {}).filter(Boolean).length : total;
   let rows = '';
   for (let q=1; q<=total; q++) {
     rows += `<div class="gab-row" data-q="${q}">
@@ -1347,20 +1385,25 @@ function wizardStep3() {
       <div class="gab-options">
         ${letras.map(L => `<div class="gab-bubble ${d.gabarito[q]===L?'selected':''}" data-l="${L}" onclick="marcarGab(${q},'${L}')">${L}</div>`).join('')}
       </div>
+      ${ isCAED ? `
+      <div class="gab-niveis" data-q-niv="${q}" style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 2px;width:100%">
+        ${NIVEIS_SAEB.map(n => `<div class="chip ${d.niveisQuestoes?.[q]===n?'active':''}" data-n="${n}" style="font-size:10px;cursor:pointer" onclick="marcarNivel(${q},'${n}')">${NIVEIS_SAEB_LABEL[n]}</div>`).join('')}
+      </div>` : '' }
     </div>`;
   }
   return `
     <div class="wizard-step-label">Passo 3 de 4</div>
-    <div class="wizard-step-title">Gabarito</div>
+    <div class="wizard-step-title">Gabarito${isCAED ? ' e níveis' : ''}</div>
     <div class="wizard-step-sub">
-      Marque a alternativa correta de cada questão. <strong id="gab-counter" style="color:var(--cyan)">${marcadas}/${total}</strong> marcadas.
+      Marque a alternativa correta de cada questão${isCAED ? ' e o nível dela (Elementar I a Desejável)' : ''}.
+      <strong id="gab-counter" style="color:var(--cyan)">${marcadas}/${total}</strong> marcadas${isCAED ? ` · <strong id="niv-counter" style="color:var(--yellow)">${niveisMarcados}/${total}</strong> níveis definidos` : ''}.
     </div>
     <div class="wizard-body">
       <div class="gab-list">${rows}</div>
     </div>
     <div class="wizard-footer">
       <button class="btn btn-ghost" onclick="wizardBack()">← Voltar</button>
-      <button class="btn btn-cyan" onclick="wizardGoStep4()" ${ marcadas<total ? 'disabled' : '' }>Próximo →</button>
+      <button class="btn btn-cyan" onclick="wizardGoStep4()" ${ (marcadas<total || (isCAED && niveisMarcados<total)) ? 'disabled' : '' }>Próximo →</button>
     </div>
   `;
 }
@@ -1373,13 +1416,7 @@ function marcarGab(q, L) {
     row.querySelectorAll('.gab-bubble').forEach(el => {
       el.classList.toggle('selected', el.dataset.l === L);
     });
-    // Atualiza contador e estado do botão Próximo
-    const total    = wizard.data.numQuestoes;
-    const marcadas = Object.values(wizard.data.gabarito).filter(Boolean).length;
-    const counter  = document.getElementById('gab-counter');
-    if (counter) counter.textContent = `${marcadas} de ${total} marcadas`;
-    const btnNext = document.querySelector('.wizard-footer .btn-cyan');
-    if (btnNext) btnNext.disabled = marcadas < total;
+    atualizarContadoresStep3();
   } else {
     // Fallback: re-renderiza preservando scroll
     const container = document.getElementById('app-content');
@@ -1387,6 +1424,36 @@ function marcarGab(q, L) {
     renderWizard();
     if (container) container.scrollTop = scrollY;
   }
+}
+function marcarNivel(q, nivel) {
+  wizard.data.niveisQuestoes = wizard.data.niveisQuestoes || {};
+  wizard.data.niveisQuestoes[q] = nivel;
+
+  const box = document.querySelector(`.gab-niveis[data-q-niv="${q}"]`);
+  if (box) {
+    box.querySelectorAll('.chip').forEach(el => {
+      el.classList.toggle('active', el.dataset.n === nivel);
+    });
+    atualizarContadoresStep3();
+  } else {
+    const container = document.getElementById('app-content');
+    const scrollY   = container ? container.scrollTop : 0;
+    renderWizard();
+    if (container) container.scrollTop = scrollY;
+  }
+}
+function atualizarContadoresStep3() {
+  const d = wizard.data;
+  const isCAED = d.tipoAvaliacao === 'simuladoCAED';
+  const total    = d.numQuestoes;
+  const marcadas = Object.values(d.gabarito).filter(Boolean).length;
+  const niveisMarcados = isCAED ? Object.values(d.niveisQuestoes || {}).filter(Boolean).length : total;
+  const counter  = document.getElementById('gab-counter');
+  if (counter) counter.textContent = `${marcadas}/${total}`;
+  const nivCounter = document.getElementById('niv-counter');
+  if (nivCounter) nivCounter.textContent = `${niveisMarcados}/${total}`;
+  const btnNext = document.querySelector('.wizard-footer .btn-cyan');
+  if (btnNext) btnNext.disabled = marcadas < total || (isCAED && niveisMarcados < total);
 }
 
 /* Passo 4 — pesos e anulações */
@@ -1484,6 +1551,8 @@ async function salvarProva() {
         ? [...new Set((d.disciplinasConfig || []).map(dc => dc.professorUid).filter(Boolean))]
         : [],
       professoresDestinatarios: isGestor() ? (d.professoresDestinatarios || []) : [],
+      tipoAvaliacao: d.tipoAvaliacao || 'normal',
+      niveisQuestoes: d.tipoAvaliacao === 'simuladoCAED' ? (d.niveisQuestoes || {}) : {},
     };
     if (wizard.editId) {
       await ref.provas().doc(wizard.editId).update(payload);
@@ -1533,6 +1602,7 @@ async function abrirProva(id) {
       <span class="badge badge-cyan">${escapeHtml(p.disciplina||'')}</span>
       <span class="badge badge-blue">${escapeHtml(turmaNome)}</span>
       <span class="badge badge-yellow">${escapeHtml(p.bimestre||'1')}ª unidade</span>
+      ${ p.tipoAvaliacao==='simuladoCAED' ? '<span class="badge badge-yellow" style="background:rgba(253,185,19,0.22)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.9V17h8v-2.1A7 7 0 0 0 12 2z"/></svg> Simulado CAED</span>' : '' }
       ${ p.escopo === 'escola'
         ? '<span class="badge badge-cyan" style="background:rgba(0,168,232,0.15)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="9" y1="22" x2="9" y2="12"/><line x1="15" y1="22" x2="15" y2="12"/><line x1="9" y1="7" x2="9.01" y2="7"/><line x1="15" y1="7" x2="15.01" y2="7"/></svg> Escola</span>'
         : '<span class="badge badge-blue" style="background:rgba(0,86,179,0.15)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Particular</span>' }
@@ -1638,6 +1708,8 @@ function editarProva(id) {
     multidisciplinar: p.multidisciplinar || false,
     disciplinasConfig: p.disciplinasConfig ? JSON.parse(JSON.stringify(p.disciplinasConfig)) : [],
     professoresDestinatarios: p.professoresDestinatarios ? [...p.professoresDestinatarios] : [],
+    tipoAvaliacao: p.tipoAvaliacao || 'normal',
+    niveisQuestoes: { ...(p.niveisQuestoes || {}) },
   };
   if (isGestor()) {
     carregarEquipe().then(() => renderWizard());
@@ -7440,6 +7512,97 @@ async function confirmarSalvar() {
    objeto de respostas já definido (um valor final por questão).
    Compartilhada entre o salvamento normal da correção e o recálculo
    com pesos atualizados (ver RECÁLCULO DE NOTAS COM PESOS ATUAIS). */
+/* ═══════════════════════════════════════════════════════════════
+   SIMULADOS CAED — cálculo do nível de proficiência do aluno
+   Ordem fixa dos níveis: Elementar I < Elementar II < Básico < Desejável.
+
+   Critério (acordado com o professor): o comportamento esperado é o
+   aluno ir "igual ou pior" conforme o nível fica mais difícil. Quando
+   ele vai MELHOR num nível mais difícil do que foi no nível anterior,
+   isso é tratado como inconsistência (base fraca sustentando um
+   resultado bom lá na frente) — e desconta a nota daquele nível. O
+   desconto se acumula em cascata para os níveis seguintes, pra não
+   deixar a régua "furar": um aluno não sobe de nível só porque acertou
+   muito no nível mais difícil sem ter domínio da base.
+═══════════════════════════════════════════════════════════════ */
+function calcularNivelProficiencia(prova, detalhe) {
+  const niveisQ = prova.niveisQuestoes || {};
+
+  // Agrupa questões válidas (não anuladas, com nível definido) por nível
+  const porNivel = {};
+  NIVEIS_SAEB.forEach(n => { porNivel[n] = { acertos: 0, total: 0 }; });
+  Object.entries(detalhe).forEach(([q, info]) => {
+    if (info.status === 'anulada') return;
+    const nivel = niveisQ[q];
+    if (!nivel || !porNivel[nivel]) return;
+    porNivel[nivel].total++;
+    if (info.status === 'correta') porNivel[nivel].acertos++;
+  });
+
+  // % bruto de acerto por nível (null = prova não tem questões desse nível)
+  const pctBruto = {};
+  NIVEIS_SAEB.forEach(n => {
+    const b = porNivel[n];
+    pctBruto[n] = b.total > 0 ? b.acertos / b.total : null;
+  });
+
+  // Aplica o fator de desconto por inconsistência, em cascata
+  const pctAjustado = {};
+  let fatorAcumulado = 1;
+  let anteriorBruto = null;
+  let inconsistente = false;
+
+  NIVEIS_SAEB.forEach(n => {
+    const p = pctBruto[n];
+    if (p === null) { pctAjustado[n] = null; return; }
+    if (anteriorBruto !== null && p > anteriorBruto) {
+      // foi melhor que no nível anterior (mais fácil) — desconta
+      const fatorNivel = anteriorBruto > 0 ? (anteriorBruto / p) : 0;
+      fatorAcumulado *= fatorNivel;
+      inconsistente = true;
+    }
+    pctAjustado[n] = p * fatorAcumulado;
+    anteriorBruto = p; // sempre compara com o % BRUTO do nível anterior
+  });
+
+  // Nível atingido = o mais alto nível, em ordem, cujo % ajustado bate o
+  // corte de domínio — parando no primeiro nível que não bater (cascata).
+  let nivelAtingido = null;
+  for (const n of NIVEIS_SAEB) {
+    if (pctAjustado[n] === null) continue; // sem questões desse nível: não trava nem confirma
+    if (pctAjustado[n] >= CORTE_DOMINIO_NIVEL) {
+      nivelAtingido = n;
+    } else {
+      break;
+    }
+  }
+
+  // Nota ponderada final: pesos crescentes (1..4) só nos níveis com questões
+  let somaPonderada = 0, somaPesos = 0;
+  NIVEIS_SAEB.forEach((n, i) => {
+    if (pctAjustado[n] === null) return;
+    const peso = i + 1;
+    somaPonderada += pctAjustado[n] * peso;
+    somaPesos += peso;
+  });
+  const notaPonderadaFinal = somaPesos > 0 ? (somaPonderada / somaPesos) : null;
+
+  return {
+    porNivel: NIVEIS_SAEB.reduce((acc, n) => {
+      acc[n] = {
+        acertos: porNivel[n].acertos,
+        total: porNivel[n].total,
+        percentualBruto:    pctBruto[n]    === null ? null : parseFloat((pctBruto[n]*100).toFixed(1)),
+        percentualAjustado: pctAjustado[n] === null ? null : parseFloat((pctAjustado[n]*100).toFixed(1)),
+      };
+      return acc;
+    }, {}),
+    nivelAtingido,
+    inconsistente,
+    notaPonderadaFinal: notaPonderadaFinal === null ? null : parseFloat((notaPonderadaFinal*100).toFixed(1)),
+  };
+}
+
 function calcularResultadoPonderado(prova, respostas) {
   const nQ = prova.numQuestoes;
   const detalhe = {};
@@ -7471,11 +7634,17 @@ function calcularResultadoPonderado(prova, respostas) {
     }
   }
 
+  let nivelInfo = null;
+  if (prova.tipoAvaliacao === 'simuladoCAED') {
+    nivelInfo = calcularNivelProficiencia(prova, detalhe);
+  }
+
   return {
     detalhe,
     nota:    parseFloat(acertos.toFixed(2)),
     notaMax: parseFloat(max.toFixed(2)),
-    notasPorDisciplina
+    notasPorDisciplina,
+    nivelInfo,
   };
 }
 
@@ -7495,7 +7664,7 @@ async function executarSalvar() {
       respostas[q] = r;
     }
 
-    const { detalhe, nota, notaMax, notasPorDisciplina } = calcularResultadoPonderado(prova, respostas);
+    const { detalhe, nota, notaMax, notasPorDisciplina, nivelInfo } = calcularResultadoPonderado(prova, respostas);
 
     // UIDs de professores responsáveis por alguma disciplina desta prova nesta turma
     const professoresResponsaveis = prova.multidisciplinar
@@ -7519,6 +7688,8 @@ async function executarSalvar() {
       corrigidoPor: auth.currentUser?.uid || '',
       multidisciplinar: prova.multidisciplinar || false,
       notasPorDisciplina,
+      tipoAvaliacao: prova.tipoAvaliacao || 'normal',
+      nivelInfo: nivelInfo || null,
       professoresResponsaveis,
       // Cópia dos campos de "dono/visibilidade" da prova, gravados direto
       // no resultado. Isso existe pra regra de segurança do Firestore não
@@ -7611,10 +7782,11 @@ async function executarRecalculoPesos(provaId) {
     let alterados = 0;
 
     resultadosProva.forEach(r => {
-      const { detalhe, nota, notaMax, notasPorDisciplina } = calcularResultadoPonderado(prova, r.respostas || {});
+      const { detalhe, nota, notaMax, notasPorDisciplina, nivelInfo } = calcularResultadoPonderado(prova, r.respostas || {});
       // Só regrava se algo de fato mudou, pra não gerar escritas à toa
-      if (r.nota === nota && r.notaMax === notaMax) return;
-      batch.update(ref.resultados().doc(r.id), { detalhe, nota, notaMax, notasPorDisciplina });
+      const nivelMudou = JSON.stringify(nivelInfo) !== JSON.stringify(r.nivelInfo || null);
+      if (r.nota === nota && r.notaMax === notaMax && !nivelMudou) return;
+      batch.update(ref.resultados().doc(r.id), { detalhe, nota, notaMax, notasPorDisciplina, nivelInfo: nivelInfo || null });
       alterados++;
     });
 
@@ -8372,11 +8544,45 @@ async function abrirDetalheResultado(resultadoId) {
         </div>`;
       }).join('')}
     </div>` : '' }
+    ${ r.tipoAvaliacao === 'simuladoCAED' && r.nivelInfo ? renderNivelInfoBlock(r.nivelInfo) : '' }
     <div class="dash-section-title">Respostas</div>
     <div class="res-detalhe-grid">${cells}</div>
     <div style="padding:0 16px 24px;display:flex;gap:8px">
       <button class="btn btn-ghost" style="flex:1" onclick="abrirBoletimAluno('${r.alunoId}')">Ver boletim do aluno</button>
       <button class="btn btn-cyan" style="flex:1" onclick="iniciarCorrecao('${r.provaId}')">Corrigir outro</button>
+    </div>
+  `;
+}
+
+/* Bloco reutilizável: mostra o desempenho por nível e o nível atingido
+   (usado no detalhe do resultado individual e no relatório impresso) */
+function renderNivelInfoBlock(nivelInfo) {
+  const nivelLabel = nivelInfo.nivelAtingido ? NIVEIS_SAEB_LABEL[nivelInfo.nivelAtingido] : 'Abaixo do Elementar I';
+  return `
+    <div class="dash-section-title">Nível de proficiência (Simulado CAED)</div>
+    <div style="padding:0 16px 6px">
+      <div style="background:var(--surface);border:1px solid var(--border2);border-radius:var(--r-md);padding:12px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:11px;color:var(--text-muted)">Nível atingido</div>
+          <div style="font-size:16px;font-weight:800;color:var(--cyan)">${escapeHtml(nivelLabel)}</div>
+        </div>
+        ${ nivelInfo.inconsistente ? `<span class="badge" style="background:rgba(253,185,19,.18);color:var(--yellow);font-size:10px" title="O aluno foi melhor em algum nível mais difícil do que num nível mais fácil — a nota desse nível foi descontada.">⚠ Desempenho inconsistente</span>` : '' }
+      </div>
+      ${NIVEIS_SAEB.map(n => {
+        const info = nivelInfo.porNivel[n];
+        if (!info || info.total === 0) return '';
+        const cor = info.percentualAjustado >= (CORTE_DOMINIO_NIVEL*100) ? 'var(--cyan)' : (info.percentualAjustado >= 40 ? 'var(--yellow)' : '#e31b23');
+        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+          <div style="width:96px;font-size:12px;color:var(--text-muted)">${NIVEIS_SAEB_LABEL[n]}</div>
+          <div style="flex:1;background:var(--surface2);border-radius:6px;height:8px;overflow:hidden">
+            <div style="height:100%;width:${Math.min(100,info.percentualAjustado||0)}%;background:${cor}"></div>
+          </div>
+          <div style="width:96px;text-align:right;font-size:12px;color:${cor}">
+            ${info.acertos}/${info.total}
+            ${ info.percentualAjustado !== info.percentualBruto ? `<span style="color:var(--text-dim)"> (bruto ${info.percentualBruto}%)</span>` : '' }
+          </div>
+        </div>`;
+      }).join('')}
     </div>
   `;
 }
@@ -9194,12 +9400,17 @@ async function _gerarResultadosPDF(turmaFiltro){
     const extras = extrasIds.map(id => ({ id, nome: resPorAluno[id].alunoNome || '(removido)' }));
     const finalArr = [...lista, ...extras];
 
+    const isCAED = prova.tipoAvaliacao === 'simuladoCAED';
+
     const linhas = finalArr.map((a, i) => {
       const r = resPorAluno[a.id];
+      const colNivel = isCAED
+        ? `<td class="num">${r?.nivelInfo?.nivelAtingido ? escapeHtml(NIVEIS_SAEB_LABEL[r.nivelInfo.nivelAtingido]) + (r.nivelInfo.inconsistente ? ' ⚠' : '') : (r ? 'Abaixo do Elementar I' : '—')}</td>`
+        : '';
       if(!r){
         return `<tr class="pend"><td class="num">${i+1}</td><td class="aluno">${escapeHtml(a.nome)}</td>
                 <td class="num">—</td><td class="num">—</td><td class="num">—</td>
-                <td class="num sit-pend">Pendente</td></tr>`;
+                <td class="num sit-pend">Pendente</td>${colNivel}</tr>`;
       }
       const pct = r.notaMax ? (r.nota/r.notaMax) : 0;
       const cls = pct >= 0.7 ? 'aprov' : pct >= 0.5 ? 'rec' : 'rep';
@@ -9210,11 +9421,35 @@ async function _gerarResultadosPDF(turmaFiltro){
               <td class="num">${fmtNota(r.nota||0)}</td>
               <td class="num">${r.notaMax ? fmtNota(r.notaMax) : '—'}</td>
               <td class="num">${Math.round(pct*100)}%</td>
-              <td class="num">${sit}</td></tr>`;
+              <td class="num">${sit}</td>${colNivel}</tr>`;
     }).join('');
 
+    // Distribuição de níveis (só simulados CAED)
+    let distribuicaoHtml = '';
+    if (isCAED) {
+      const contagem = {};
+      NIVEIS_SAEB.forEach(n => contagem[n] = 0);
+      let abaixoElementarI = 0;
+      corrigidos.forEach(r => {
+        const n = r.nivelInfo?.nivelAtingido;
+        if (n && contagem[n] !== undefined) contagem[n]++;
+        else abaixoElementarI++;
+      });
+      const totalNiveis = corrigidos.length || 1;
+      distribuicaoHtml = `
+        <h2 class="sec">Distribuição de níveis</h2>
+        <table>
+          <thead><tr><th class="aluno">Nível</th><th class="num">Alunos</th><th class="num">%</th></tr></thead>
+          <tbody>
+            <tr><td class="aluno">Abaixo do Elementar I</td><td class="num">${abaixoElementarI}</td><td class="num">${Math.round(abaixoElementarI/totalNiveis*100)}%</td></tr>
+            ${NIVEIS_SAEB.map(n => `<tr><td class="aluno">${NIVEIS_SAEB_LABEL[n]}</td><td class="num">${contagem[n]}</td><td class="num">${Math.round(contagem[n]/totalNiveis*100)}%</td></tr>`).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
     const html = `
-      ${_lgPdfCabecalho(prova, 'Resultados da prova', turmaFiltro)}
+      ${_lgPdfCabecalho(prova, isCAED ? 'Resultados do simulado CAED' : 'Resultados da prova', turmaFiltro)}
       <div class="resumo">
         <span class="t">Corrigidos: ${corrigidos.length}/${alunos.length || corrigidos.length}</span>
         <span class="a">Média: ${corrigidos.length ? fmtNota(media) : '—'}</span>
@@ -9229,9 +9464,11 @@ async function _gerarResultadosPDF(turmaFiltro){
           <th class="num">Máx.</th>
           <th class="num">%</th>
           <th class="num">Situação</th>
+          ${isCAED ? '<th class="num">Nível</th>' : ''}
         </tr></thead>
-        <tbody>${linhas || '<tr><td colspan="6" class="num">Nenhum resultado.</td></tr>'}</tbody>
+        <tbody>${linhas || `<tr><td colspan="${isCAED?7:6}" class="num">Nenhum resultado.</td></tr>`}</tbody>
       </table>
+      ${distribuicaoHtml}
       ${_lgPdfRodape()}
     `;
     _lgAbrirJanelaImpressao(html, 'portrait');
