@@ -1460,14 +1460,24 @@ async function salvarProva() {
     };
     if (wizard.editId) {
       await ref.provas().doc(wizard.editId).update(payload);
+      if (cache.provas) {
+        const idx = cache.provas.findIndex(p => p.id === wizard.editId);
+        if (idx !== -1) cache.provas[idx] = { ...cache.provas[idx], ...payload };
+      }
       toast('Prova atualizada', 'success');
     } else {
       payload.criadoEm = firebase.firestore.FieldValue.serverTimestamp();
       const docRef = await ref.provas().add(payload);
       wizard.editId = docRef.id;
+      // Insere localmente em vez de zerar o cache e reconsultar na hora:
+      // uma consulta orderBy('criadoEm') feita logo em seguida NÃO traz de
+      // volta este documento, porque o serverTimestamp ainda não foi
+      // resolvido pelo servidor (é um comportamento conhecido do Firestore).
+      // Usamos "new Date()" só para exibição/ordenação local imediata; o
+      // valor real do servidor entra na próxima recarga forçada do cache.
+      if (cache.provas) cache.provas.unshift({ id: docRef.id, ...payload, criadoEm: new Date() });
       toast('Prova criada', 'success');
     }
-    cache.provas = null;
     navTo('provas');
   } catch (e) { toast('Erro: '+e.message,'error'); }
   finally { setLoading('btn-w-save', false); }
@@ -3572,6 +3582,18 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db   = firebase.firestore();
+
+// Habilita fila de escrita/leitura offline persistente (IndexedDB).
+// Sem isso, uma escrita (add/update) que ainda não foi confirmada pelo
+// servidor fica só em memória — se o app for fechado/morto ou a conexão
+// cair antes da confirmação, a escrita se perde silenciosamente, sem erro
+// nenhum pro usuário. Com persistência habilitada, a escrita fica em disco
+// e é reenviada automaticamente assim que a conexão/app voltar.
+db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+  // 'failed-precondition' = já tem outra aba/instância com persistência aberta
+  // 'unimplemented' = navegador/WebView sem suporte a IndexedDB
+  console.warn('Persistência offline do Firestore não habilitada:', err.code);
+});
 
 /* ═══════════════════════════════════════════
    ESTADO GLOBAL
