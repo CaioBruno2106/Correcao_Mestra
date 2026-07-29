@@ -30,18 +30,30 @@ const cache = { turmas: null, alunos: null, provas: null };
 /* Controle de exibição de provas arquivadas */
 let _showArquivadas = false;
 
+// Evita disparar a mesma busca duas vezes se algo chamar loadCache()
+// enquanto uma busca anterior ainda está em andamento (ex: showApp() já
+// disparou o carregamento, e loadDashStats() chama de novo logo em
+// seguida) — quem chamar nesse meio-tempo só espera a mesma Promise.
+let _loadCacheEmAndamento = null;
+
 async function loadCache(force = false) {
   if (!app.escolaId) return;
-  try {
-    const tasks = [];
-    if (force || !cache.turmas) tasks.push(ref.turmas().orderBy('nome').get().then(s => cache.turmas = s.docs.map(d => ({ id: d.id, ...d.data() }))));
-    if (force || !cache.alunos) tasks.push(ref.alunos().orderBy('nome').get().then(s => cache.alunos = s.docs.map(d => ({ id: d.id, ...d.data() }))));
-    if (force || !cache.provas) tasks.push(carregarProvas());
-    await Promise.all(tasks);
-  } catch (e) {
-    console.warn('loadCache', e);
-    cache.turmas ??= []; cache.alunos ??= []; cache.provas ??= [];
-  }
+  if (_loadCacheEmAndamento) return _loadCacheEmAndamento;
+  _loadCacheEmAndamento = (async () => {
+    try {
+      const tasks = [];
+      if (force || !cache.turmas) tasks.push(ref.turmas().orderBy('nome').get().then(s => cache.turmas = s.docs.map(d => ({ id: d.id, ...d.data() }))));
+      if (force || !cache.alunos) tasks.push(ref.alunos().orderBy('nome').get().then(s => cache.alunos = s.docs.map(d => ({ id: d.id, ...d.data() }))));
+      if (force || !cache.provas) tasks.push(carregarProvas());
+      await Promise.all(tasks);
+    } catch (e) {
+      console.warn('loadCache', e);
+      cache.turmas ??= []; cache.alunos ??= []; cache.provas ??= [];
+    } finally {
+      _loadCacheEmAndamento = null;
+    }
+  })();
+  return _loadCacheEmAndamento;
 }
 
 // Busca as provas com consultas que já batem com a regra de segurança,
@@ -64,14 +76,19 @@ async function carregarProvas() {
     // Gestor: vê provas de escopo diferente de "proprio"
     addDocs(await ref.provas().where('escopo', '!=', 'proprio').get());
   } else {
-    // Provas que eu criei (cobre escopo "proprio" e "escola" próprias)
-    addDocs(await ref.provas().where('criadoPor', '==', uid).get());
-    // Provas de escopo "escola" sem lista de destinatários (visível a todos)
-    addDocs(await ref.provas().where('escopo', '==', 'escola').where('professoresDestinatarios', '==', []).get());
-    // Provas de escopo "escola" com lista de destinatários que me incluem
-    addDocs(await ref.provas().where('escopo', '==', 'escola').where('professoresDestinatarios', 'array-contains', uid).get());
-    // Provas multidisciplinares em que sou responsável por alguma disciplina
-    addDocs(await ref.provas().where('disciplinasProfessorUids', 'array-contains', uid).get());
+    // As 4 consultas não dependem uma da outra — roda em paralelo em vez
+    // de uma atrás da outra, bem mais rápido.
+    const [s1, s2, s3, s4] = await Promise.all([
+      // Provas que eu criei (cobre escopo "proprio" e "escola" próprias)
+      ref.provas().where('criadoPor', '==', uid).get(),
+      // Provas de escopo "escola" sem lista de destinatários (visível a todos)
+      ref.provas().where('escopo', '==', 'escola').where('professoresDestinatarios', '==', []).get(),
+      // Provas de escopo "escola" com lista de destinatários que me incluem
+      ref.provas().where('escopo', '==', 'escola').where('professoresDestinatarios', 'array-contains', uid).get(),
+      // Provas multidisciplinares em que sou responsável por alguma disciplina
+      ref.provas().where('disciplinasProfessorUids', 'array-contains', uid).get(),
+    ]);
+    [s1, s2, s3, s4].forEach(addDocs);
   }
 
   cache.provas = Array.from(porId.values())
@@ -3092,6 +3109,23 @@ function showScreenAfterSplash(screenId, callback) {
   }, remaining);
 }
 
+// Igual a showScreenAfterSplash, mas também espera uma Promise de dados
+// terminar antes de tirar a splash — assim os números do resumo (provas,
+// turmas, alunos, correções) já aparecem prontos assim que a tela
+// principal fica visível, em vez de aparecerem alguns segundos depois.
+// Se os dados demorarem mais que o tempo mínimo da splash, ela fica um
+// pouco mais na tela esperando; se os dados chegarem antes, respeita o
+// tempo mínimo normalmente.
+function showScreenAfterSplashAndData(screenId, dataPromise, callback) {
+  const elapsed = Date.now() - _splashStartTime;
+  const remaining = Math.max(0, _SPLASH_MIN_MS - elapsed);
+  const tempoMinimo = new Promise(res => setTimeout(res, remaining));
+  Promise.all([tempoMinimo, dataPromise.catch(() => {})]).then(() => {
+    showScreen(screenId);
+    if (callback) callback();
+  });
+}
+
 /* ── Animação da splash Nota Mestra ──
    Sequência fiel à referência:
    1 fundo · 2 folha · 3 círculos aparecem · 4 pontos se preenchem · 5 símbolo · 6 pronto
@@ -4042,7 +4076,11 @@ function copyCode() {
    APP PRINCIPAL
 ═══════════════════════════════════════════ */
 function showApp() {
-  showScreenAfterSplash('screen-app', null);
+  // Dispara o carregamento dos dados (turmas, alunos, provas, resultados)
+  // já de cara, em paralelo com o tempo mínimo da splash — assim os
+  // números do resumo já chegam prontos quando a tela aparece.
+  const dadosProntos = Promise.all([loadCache(), loadResultados()]);
+  showScreenAfterSplashAndData('screen-app', dadosProntos, null);
 
   // Topbar
   const u = app.user;
@@ -7959,32 +7997,43 @@ function gerarJSONExportacaoNM() {
 /* Cache simples de resultados (por escola) */
 const cacheRes = { items: null };
 
+let _loadResultadosEmAndamento = null;
+
 async function loadResultados(force = false) {
   if (!app.escolaId) return [];
   if (!force && cacheRes.items) return cacheRes.items;
-  try {
-    const uid = app.user?.uid;
-    const gestor = isGestor();
-    const porId = new Map();
-    const addDocs = snap => snap.docs.forEach(d => {
-      if (!porId.has(d.id)) porId.set(d.id, { id: d.id, ...d.data() });
-    });
+  if (_loadResultadosEmAndamento) return _loadResultadosEmAndamento;
+  _loadResultadosEmAndamento = (async () => {
+    try {
+      const uid = app.user?.uid;
+      const gestor = isGestor();
+      const porId = new Map();
+      const addDocs = snap => snap.docs.forEach(d => {
+        if (!porId.has(d.id)) porId.set(d.id, { id: d.id, ...d.data() });
+      });
 
-    if (gestor) {
-      addDocs(await ref.resultados().where('provaEscopo', '!=', 'proprio').get());
-    } else {
-      addDocs(await ref.resultados().where('provaCriadoPor', '==', uid).get());
-      addDocs(await ref.resultados().where('provaEscopo', '==', 'escola').where('provaProfessoresDestinatarios', '==', []).get());
-      addDocs(await ref.resultados().where('provaEscopo', '==', 'escola').where('provaProfessoresDestinatarios', 'array-contains', uid).get());
-      addDocs(await ref.resultados().where('provaDisciplinasProfessorUids', 'array-contains', uid).get());
+      if (gestor) {
+        addDocs(await ref.resultados().where('provaEscopo', '!=', 'proprio').get());
+      } else {
+        const [s1, s2, s3, s4] = await Promise.all([
+          ref.resultados().where('provaCriadoPor', '==', uid).get(),
+          ref.resultados().where('provaEscopo', '==', 'escola').where('provaProfessoresDestinatarios', '==', []).get(),
+          ref.resultados().where('provaEscopo', '==', 'escola').where('provaProfessoresDestinatarios', 'array-contains', uid).get(),
+          ref.resultados().where('provaDisciplinasProfessorUids', 'array-contains', uid).get(),
+        ]);
+        [s1, s2, s3, s4].forEach(addDocs);
+      }
+
+      cacheRes.items = Array.from(porId.values());
+    } catch (e) {
+      console.warn('loadResultados', e);
+      cacheRes.items = [];
+    } finally {
+      _loadResultadosEmAndamento = null;
     }
-
-    cacheRes.items = Array.from(porId.values());
-  } catch (e) {
-    console.warn('loadResultados', e);
-    cacheRes.items = [];
-  }
-  return cacheRes.items;
+    return cacheRes.items;
+  })();
+  return _loadResultadosEmAndamento;
 }
 
 /* Invalida cache em ações relevantes */
