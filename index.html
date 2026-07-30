@@ -3323,7 +3323,7 @@ function showScreenAfterSplashAndData(screenId, dataPromise, callback) {
   <div class="login-card">
     <div>
       <div class="login-card-title">Entrar</div>
-      <div class="login-card-sub">Use sua conta Google para acessar o app</div>
+      <div class="login-card-sub">Use sua conta Google ou e-mail e senha para acessar o app</div>
     </div>
 
     <button class="btn btn-google" id="btn-google-login">
@@ -3338,10 +3338,41 @@ function showScreenAfterSplashAndData(screenId, dataPromise, callback) {
 
     <div class="divider">ou</div>
 
-    <button class="btn btn-primary" id="btn-email-login" style="opacity:0.6;cursor:not-allowed" disabled>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22 6 12 13 2 6"/></svg> &nbsp;Entrar com e-mail
-      <span style="font-size:10px;opacity:0.6;margin-left:4px">(em breve)</span>
-    </button>
+    <div id="email-auth-toggle">
+      <button class="btn btn-primary" id="btn-email-login" onclick="toggleEmailAuthForm()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22 6 12 13 2 6"/></svg> &nbsp;Entrar com e-mail
+      </button>
+    </div>
+
+    <div id="email-auth-form" class="hidden" style="display:flex;flex-direction:column;gap:10px">
+      <div class="input-group hidden" id="login-nome-group">
+        <label class="input-label">Nome completo</label>
+        <input class="input" id="login-nome" type="text" maxlength="80" placeholder="Seu nome completo" autocomplete="name">
+      </div>
+      <div class="input-group">
+        <label class="input-label">E-mail</label>
+        <input class="input" id="login-email" type="email" placeholder="seu@email.com" autocomplete="email">
+      </div>
+      <div class="input-group">
+        <label class="input-label">Senha</label>
+        <input class="input" id="login-senha" type="password" placeholder="Sua senha" autocomplete="current-password">
+      </div>
+      <div class="input-group hidden" id="login-senha-confirma-group">
+        <label class="input-label">Confirmar senha</label>
+        <input class="input" id="login-senha-confirma" type="password" placeholder="Repita a senha" autocomplete="new-password">
+      </div>
+
+      <button class="btn btn-cyan" id="btn-email-submit" onclick="submeterEmailAuth()">Entrar</button>
+
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:-2px">
+        <span onclick="alternarModoEmailAuth()" id="link-alternar-modo" style="cursor:pointer;color:var(--cyan2)">Criar uma conta</span>
+        <span onclick="recuperarSenha()" id="link-esqueci-senha" style="cursor:pointer;color:var(--text-muted)">Esqueci minha senha</span>
+      </div>
+
+      <div id="email-auth-msg" class="nm-msg" style="display:none"></div>
+
+      <span onclick="toggleEmailAuthForm()" style="cursor:pointer;color:var(--text-dim);font-size:12px;text-align:center;margin-top:-2px">Voltar</span>
+    </div>
 
     <div class="login-terms">
       Ao entrar, você concorda com os Termos de Uso e a Política de Privacidade do Correção Mestra.
@@ -3831,6 +3862,118 @@ document.getElementById('btn-google-login').onclick = async () => {
   }
 };
 
+// ─── Login/cadastro por e-mail e senha ───────────────────────────
+let _modoEmailAuth = 'login'; // 'login' | 'cadastro'
+
+function toggleEmailAuthForm() {
+  document.getElementById('email-auth-form').classList.remove('hidden');
+  document.getElementById('email-auth-toggle').classList.add('hidden');
+  document.getElementById('login-email').focus();
+}
+
+function alternarModoEmailAuth() {
+  _modoEmailAuth = _modoEmailAuth === 'login' ? 'cadastro' : 'login';
+  const nomeGroup     = document.getElementById('login-nome-group');
+  const confirmaGroup = document.getElementById('login-senha-confirma-group');
+  const btnSubmit     = document.getElementById('btn-email-submit');
+  const linkAlternar  = document.getElementById('link-alternar-modo');
+  const linkEsqueci   = document.getElementById('link-esqueci-senha');
+  document.getElementById('email-auth-msg').style.display = 'none';
+  if (_modoEmailAuth === 'cadastro') {
+    nomeGroup.classList.remove('hidden');
+    confirmaGroup.classList.remove('hidden');
+    btnSubmit.textContent = 'Criar conta';
+    linkAlternar.textContent = 'Já tenho conta';
+    linkEsqueci.style.display = 'none';
+  } else {
+    nomeGroup.classList.add('hidden');
+    confirmaGroup.classList.add('hidden');
+    btnSubmit.textContent = 'Entrar';
+    linkAlternar.textContent = 'Criar uma conta';
+    linkEsqueci.style.display = '';
+  }
+}
+
+function _mostrarMsgEmailAuth(texto, tipo) {
+  const msgEl = document.getElementById('email-auth-msg');
+  if (!msgEl) return;
+  msgEl.textContent = texto;
+  msgEl.className = 'nm-msg ' + tipo;
+  msgEl.style.display = 'block';
+}
+
+async function submeterEmailAuth() {
+  const email = document.getElementById('login-email').value.trim();
+  const senha = document.getElementById('login-senha').value;
+  let nome = '';
+
+  if (!email || !senha) {
+    _mostrarMsgEmailAuth('Informe e-mail e senha.', 'error');
+    return;
+  }
+
+  if (_modoEmailAuth === 'cadastro') {
+    nome = document.getElementById('login-nome').value.trim();
+    const confirma = document.getElementById('login-senha-confirma').value;
+    if (!nome) {
+      _mostrarMsgEmailAuth('Informe seu nome completo.', 'error');
+      return;
+    }
+    if (senha.length < 6) {
+      _mostrarMsgEmailAuth('A senha precisa ter pelo menos 6 caracteres.', 'error');
+      return;
+    }
+    if (senha !== confirma) {
+      _mostrarMsgEmailAuth('As senhas não coincidem.', 'error');
+      return;
+    }
+  }
+
+  setLoading('btn-email-submit', true);
+  try {
+    if (_modoEmailAuth === 'cadastro') {
+      const cred = await auth.createUserWithEmailAndPassword(email, senha);
+      try { await cred.user.updateProfile({ displayName: nome }); } catch (e) { /* não impede o cadastro */ }
+    } else {
+      await auth.signInWithEmailAndPassword(email, senha);
+    }
+    // Sucesso: auth.onAuthStateChanged cuida da troca de tela.
+  } catch (e) {
+    _mostrarMsgEmailAuth(_traduzErroAuthPrincipal(e), 'error');
+    setLoading('btn-email-submit', false);
+  }
+}
+
+async function recuperarSenha() {
+  const email = document.getElementById('login-email').value.trim();
+  if (!email) {
+    _mostrarMsgEmailAuth('Digite seu e-mail acima para receber o link de redefinição.', 'info');
+    return;
+  }
+  try {
+    await auth.sendPasswordResetEmail(email);
+    _mostrarMsgEmailAuth('Enviamos um e-mail com o link para redefinir sua senha.', 'success');
+  } catch (e) {
+    _mostrarMsgEmailAuth(_traduzErroAuthPrincipal(e), 'error');
+  }
+}
+
+function _traduzErroAuthPrincipal(e) {
+  const map = {
+    'auth/wrong-password':          'Senha incorreta.',
+    'auth/user-not-found':          'Não existe conta com esse e-mail. Toque em "Criar uma conta" para se cadastrar.',
+    'auth/invalid-credential':      'E-mail ou senha incorretos.',
+    'auth/invalid-email':           'E-mail inválido.',
+    'auth/too-many-requests':       'Muitas tentativas. Tente de novo em alguns minutos.',
+    'auth/user-disabled':           'Esta conta está desativada.',
+    'auth/email-already-in-use':    'Já existe uma conta com esse e-mail. Toque em "Já tenho conta" para entrar.',
+    'auth/weak-password':           'A senha precisa ter pelo menos 6 caracteres.',
+    'auth/missing-password':        'Informe uma senha.',
+    'auth/network-request-failed':  'Falha de conexão. Verifique sua internet.'
+  };
+  return map[e.code] || ('Erro: ' + e.message);
+}
+
 // Bridge Android → recebe idToken e faz login. Como a ponte nativa é
 // compartilhada entre o login principal e a conexão com o Nota Mestra,
 // _googleSignInAlvo diz pra qual instância do Firebase Auth ele vai.
@@ -3887,6 +4030,32 @@ async function signOut() {
     // A conexão com o Nota Mestra é uma sessão separada (outro projeto Firebase)
     // e não deve sobreviver ao logout do Correção Mestra.
     try { await nmAuth.signOut(); } catch (e) {}
+    // Reseta o formulário de e-mail/senha ao estado inicial (fechado, modo login)
+    try {
+      const form = document.getElementById('email-auth-form');
+      const toggleWrap = document.getElementById('email-auth-toggle');
+      if (form && toggleWrap) {
+        form.classList.add('hidden');
+        toggleWrap.classList.remove('hidden');
+      }
+      _modoEmailAuth = 'login';
+      const nomeGroup = document.getElementById('login-nome-group');
+      if (nomeGroup) nomeGroup.classList.add('hidden');
+      const confirmaGroup = document.getElementById('login-senha-confirma-group');
+      if (confirmaGroup) confirmaGroup.classList.add('hidden');
+      const btnSubmit = document.getElementById('btn-email-submit');
+      if (btnSubmit) btnSubmit.textContent = 'Entrar';
+      const linkAlternar = document.getElementById('link-alternar-modo');
+      if (linkAlternar) linkAlternar.textContent = 'Criar uma conta';
+      const linkEsqueci = document.getElementById('link-esqueci-senha');
+      if (linkEsqueci) linkEsqueci.style.display = '';
+      const msgEl = document.getElementById('email-auth-msg');
+      if (msgEl) msgEl.style.display = 'none';
+      ['login-nome','login-email','login-senha','login-senha-confirma'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+    } catch (e) {}
     // Restaura o botão do Google após o logout (seja bem ou mal-sucedido)
     const btn = document.getElementById('btn-google-login');
     if (btn) {
@@ -4087,9 +4256,9 @@ async function vincularProfessor(escolaId, escolaNome, role, disciplinasSalvar) 
   else escolas.push({ escolaId, escolaNome, role });
 
   const payload = {
-    nome:       u.displayName || 'Professor',
+    nome:       cur.nome || u.displayName || 'Professor',
     email:      u.email,
-    foto:       u.photoURL || '',
+    foto:       cur.foto || u.photoURL || '',
     escolas,
     escolaAtivaId: escolaId,
     // legado (compat)
@@ -4098,7 +4267,7 @@ async function vincularProfessor(escolaId, escolaNome, role, disciplinasSalvar) 
   };
   if (disciplinasSalvar !== undefined) payload.disciplinas = disciplinasSalvar;
   await ref.set(payload, { merge: true });
-  app.professor = { ...(cur||{}), nome: u.displayName, email: u.email, foto: u.photoURL, escolas, escolaAtivaId: escolaId, escolaId, escolaNome, role, disciplinas: disciplinasSalvar ?? cur.disciplinas ?? [] };
+  app.professor = { ...(cur||{}), nome: payload.nome, email: u.email, foto: payload.foto, escolas, escolaAtivaId: escolaId, escolaId, escolaNome, role, disciplinas: disciplinasSalvar ?? cur.disciplinas ?? [] };
 }
 
 /* ── Editar disciplinas do professor ── */
@@ -4144,6 +4313,158 @@ function finishOnboarding() {
   showApp();
 }
 
+/* ── Meu Perfil (nome, foto, senha) ── */
+function abrirMeuPerfil() {
+  const u = app.user;
+  const p = app.professor;
+  const nomeAtual = p?.nome || u?.displayName || '';
+  const fotoAtual = p?.foto || u?.photoURL || '';
+  const temSenha  = (u?.providerData || []).some(pr => pr.providerId === 'password');
+
+  showModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">Meu perfil</div>
+
+    <div style="text-align:center;margin-bottom:14px">
+      <div id="perfil-avatar-wrap" onclick="document.getElementById('perfil-foto-input').click()"
+           style="width:76px;height:76px;border-radius:50%;margin:0 auto;cursor:pointer;overflow:hidden;
+                  background:var(--surface2);display:flex;align-items:center;justify-content:center;
+                  border:2px solid var(--border)">
+        ${fotoAtual
+          ? `<img src="${fotoAtual}" alt="foto" style="width:100%;height:100%;object-fit:cover">`
+          : `<span style="font-size:24px;font-weight:700;color:var(--text-muted)">${initials(nomeAtual || '?')}</span>`}
+      </div>
+      <input type="file" id="perfil-foto-input" accept="image/*" class="hidden" onchange="onPerfilFotoChange(this)">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Toque na foto para alterar</div>
+    </div>
+
+    <div class="input-group">
+      <label class="input-label">Nome completo</label>
+      <input class="input" id="perfil-nome" type="text" maxlength="80" value="${escapeHtml(nomeAtual)}">
+    </div>
+    <div class="input-group" style="margin-top:10px">
+      <label class="input-label">E-mail</label>
+      <input class="input" value="${escapeHtml(u?.email || '')}" disabled style="opacity:0.6">
+    </div>
+
+    <button class="btn btn-cyan" id="btn-perfil-salvar" onclick="salvarMeuPerfil()" style="margin-top:14px">Salvar alterações</button>
+    <div id="perfil-msg" class="nm-msg" style="display:none;margin-top:8px"></div>
+
+    ${temSenha ? `
+      <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">Alterar senha</div>
+        <div class="input-group">
+          <label class="input-label">Senha atual</label>
+          <input class="input" id="perfil-senha-atual" type="password" placeholder="Senha atual" autocomplete="current-password">
+        </div>
+        <div class="input-group" style="margin-top:10px">
+          <label class="input-label">Nova senha</label>
+          <input class="input" id="perfil-senha-nova" type="password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+        </div>
+        <button class="btn btn-ghost" id="btn-perfil-senha" onclick="alterarSenhaPerfil()" style="margin-top:10px">Atualizar senha</button>
+        <div id="perfil-senha-msg" class="nm-msg" style="display:none;margin-top:8px"></div>
+      </div>
+    ` : `
+      <div style="font-size:11px;color:var(--text-dim);line-height:1.5;margin-top:14px">
+        Você entra com sua conta Google, então a senha é gerenciada pelo Google.
+      </div>
+    `}
+
+    <button class="btn btn-ghost" style="margin-top:10px" onclick="closeModal()">Fechar</button>
+  `);
+}
+
+async function onPerfilFotoChange(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 900 * 1024) {
+    toast('Escolha uma imagem menor que 900KB.', 'error');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    const base64 = ev.target.result;
+    try {
+      await db.collection('professores').doc(app.user.uid).set({ foto: base64 }, { merge: true });
+      app.professor = { ...(app.professor || {}), foto: base64 };
+      _atualizarAvatarUIGlobal();
+      toast('Foto atualizada!', 'success');
+      abrirMeuPerfil(); // re-renderiza o modal já com a nova foto
+    } catch (e) {
+      toast('Erro ao salvar foto: ' + e.message, 'error');
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+// Atualiza avatar na topbar e, se estiver na tela Mais/Início, refaz a renderização
+function _atualizarAvatarUIGlobal() {
+  const u = app.user, p = app.professor;
+  const foto = p?.foto || u?.photoURL || '';
+  const nome = p?.nome || u?.displayName || '?';
+  const avatarEl   = document.getElementById('topbar-avatar');
+  const initialsEl = document.getElementById('topbar-avatar-initials');
+  if (avatarEl && initialsEl) {
+    if (foto) { avatarEl.innerHTML = `<img src="${foto}" alt="foto">`; }
+    else      { initialsEl.textContent = initials(nome); }
+  }
+  if (app.currentNav === 'mais')   navTo('mais');
+  if (app.currentNav === 'inicio') navTo('inicio');
+}
+
+async function salvarMeuPerfil() {
+  const nome  = document.getElementById('perfil-nome').value.trim();
+  const msgEl = document.getElementById('perfil-msg');
+  if (!nome) {
+    msgEl.textContent = 'Informe seu nome completo.';
+    msgEl.className = 'nm-msg error';
+    msgEl.style.display = 'block';
+    return;
+  }
+  setLoading('btn-perfil-salvar', true);
+  try {
+    await db.collection('professores').doc(app.user.uid).set({ nome }, { merge: true });
+    app.professor = { ...(app.professor || {}), nome };
+    try { await app.user.updateProfile({ displayName: nome }); } catch (e) { /* segue mesmo se falhar */ }
+    _atualizarAvatarUIGlobal();
+    toast('Perfil atualizado!', 'success');
+    msgEl.style.display = 'none';
+  } catch (e) {
+    msgEl.textContent = 'Erro ao salvar: ' + e.message;
+    msgEl.className = 'nm-msg error';
+    msgEl.style.display = 'block';
+  } finally {
+    setLoading('btn-perfil-salvar', false);
+  }
+}
+
+async function alterarSenhaPerfil() {
+  const atual = document.getElementById('perfil-senha-atual').value;
+  const nova  = document.getElementById('perfil-senha-nova').value;
+  const msgEl = document.getElementById('perfil-senha-msg');
+  const mostrar = (texto, tipo) => {
+    msgEl.textContent = texto;
+    msgEl.className = 'nm-msg ' + tipo;
+    msgEl.style.display = 'block';
+  };
+  if (!atual || !nova) { mostrar('Informe a senha atual e a nova senha.', 'error'); return; }
+  if (nova.length < 6) { mostrar('A nova senha precisa ter pelo menos 6 caracteres.', 'error'); return; }
+
+  setLoading('btn-perfil-senha', true);
+  try {
+    const credencial = firebase.auth.EmailAuthProvider.credential(app.user.email, atual);
+    await app.user.reauthenticateWithCredential(credencial);
+    await app.user.updatePassword(nova);
+    mostrar('Senha atualizada com sucesso!', 'success');
+    document.getElementById('perfil-senha-atual').value = '';
+    document.getElementById('perfil-senha-nova').value = '';
+  } catch (e) {
+    mostrar(_traduzErroAuthPrincipal(e), 'error');
+  } finally {
+    setLoading('btn-perfil-senha', false);
+  }
+}
+
 function copyCode() {
   const code = document.getElementById('ob-code-value').textContent;
   if (navigator.clipboard) navigator.clipboard.writeText(code);
@@ -4162,13 +4483,15 @@ function showApp() {
 
   // Topbar
   const u = app.user;
+  const pfNome = app.professor?.nome || u?.displayName || '?';
+  const pfFoto = app.professor?.foto || u?.photoURL || '';
   document.getElementById('topbar-escola-name').innerHTML = (app.escola?.nome || '—') + ' <span style="opacity:.7">▾</span>';
   const avatarEl = document.getElementById('topbar-avatar');
   const initialsEl = document.getElementById('topbar-avatar-initials');
-  if (u?.photoURL) {
-    avatarEl.innerHTML = `<img src="${u.photoURL}" alt="foto">`;
+  if (pfFoto) {
+    avatarEl.innerHTML = `<img src="${pfFoto}" alt="foto">`;
   } else {
-    initialsEl.textContent = initials(u?.displayName || '?');
+    initialsEl.textContent = initials(pfNome);
   }
 
   navTo('inicio');
@@ -4196,7 +4519,7 @@ function navTo(view) {
    VIEW: INÍCIO
 ══════════════ */
 function inicio() {
-  const nome = (app.user?.displayName || 'Professor').split(' ')[0];
+  const nome = (app.professor?.nome || app.user?.displayName || 'Professor').split(' ')[0];
   const hora  = new Date().getHours();
   const saud  = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
   const escola = app.escola;
@@ -4268,16 +4591,18 @@ function inicio() {
 function mais() {
   const u = app.user;
   const p = app.professor;
-  const avatarHtml = u?.photoURL
-    ? `<img src="${u.photoURL}" alt="foto">`
-    : `<span>${initials(u?.displayName || '?')}</span>`;
+  const pfNome = p?.nome || u?.displayName || 'Professor';
+  const pfFoto = p?.foto || u?.photoURL || '';
+  const avatarHtml = pfFoto
+    ? `<img src="${pfFoto}" alt="foto">`
+    : `<span>${initials(pfNome)}</span>`;
 
   return `
-  <div class="mais-profile">
+  <div class="mais-profile" onclick="abrirMeuPerfil()" style="cursor:pointer">
     <div class="mais-avatar">${avatarHtml}</div>
     <div class="mais-profile-info">
-      <div class="mais-profile-name">${u?.displayName || 'Professor'}</div>
-      <div class="mais-profile-email">${u?.email || ''}</div>
+      <div class="mais-profile-name">${escapeHtml(pfNome)}</div>
+      <div class="mais-profile-email">${escapeHtml(u?.email || '')}</div>
     </div>
     <span class="badge badge-${isDono() ? 'yellow' : (app.professor?.role==='coordenador'?'cyan':'blue')}">
       ${papelLabel(app.professor?.role)}
