@@ -4374,27 +4374,58 @@ function abrirMeuPerfil() {
   `);
 }
 
+// Recorta em quadrado, redimensiona e comprime a imagem no navegador antes de
+// salvar — evita estourar o limite de 1MB por documento do Firestore mesmo
+// com fotos grandes vindas da câmera do celular.
+function _redimensionarImagemParaAvatar(file, maxDim = 320, qualidadeInicial = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Não foi possível ler o arquivo.'));
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Não foi possível carregar a imagem.'));
+      img.onload = () => {
+        // Recorte quadrado central (a foto sempre é exibida redonda)
+        const lado = Math.min(img.width, img.height);
+        const sx = (img.width  - lado) / 2;
+        const sy = (img.height - lado) / 2;
+
+        const canvas = document.createElement('canvas');
+        canvas.width  = maxDim;
+        canvas.height = maxDim;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, sx, sy, lado, lado, 0, 0, maxDim, maxDim);
+
+        // Reduz a qualidade até caber com folga no limite do Firestore
+        let q = qualidadeInicial;
+        let dataUrl = canvas.toDataURL('image/jpeg', q);
+        while (dataUrl.length > 700000 && q > 0.35) {
+          q -= 0.12;
+          dataUrl = canvas.toDataURL('image/jpeg', q);
+        }
+        resolve(dataUrl);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function onPerfilFotoChange(input) {
   const file = input.files[0];
   if (!file) return;
-  if (file.size > 900 * 1024) {
-    toast('Escolha uma imagem menor que 900KB.', 'error');
-    return;
+  try {
+    const base64 = await _redimensionarImagemParaAvatar(file);
+    await db.collection('professores').doc(app.user.uid).set({ foto: base64 }, { merge: true });
+    app.professor = { ...(app.professor || {}), foto: base64 };
+    _atualizarAvatarUIGlobal();
+    toast('Foto atualizada!', 'success');
+    abrirMeuPerfil(); // re-renderiza o modal já com a nova foto
+  } catch (e) {
+    toast('Erro ao salvar foto: ' + e.message, 'error');
+  } finally {
+    input.value = ''; // permite selecionar o mesmo arquivo de novo, se preciso
   }
-  const reader = new FileReader();
-  reader.onload = async (ev) => {
-    const base64 = ev.target.result;
-    try {
-      await db.collection('professores').doc(app.user.uid).set({ foto: base64 }, { merge: true });
-      app.professor = { ...(app.professor || {}), foto: base64 };
-      _atualizarAvatarUIGlobal();
-      toast('Foto atualizada!', 'success');
-      abrirMeuPerfil(); // re-renderiza o modal já com a nova foto
-    } catch (e) {
-      toast('Erro ao salvar foto: ' + e.message, 'error');
-    }
-  };
-  reader.readAsDataURL(file);
 }
 
 // Atualiza avatar na topbar e, se estiver na tela Mais/Início, refaz a renderização
