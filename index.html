@@ -3858,6 +3858,18 @@ function gerarCodigo() {
   return code;
 }
 
+// Lista simples (só IDs) das escolas em que o professor participa —
+// derivada do array `escolas[]`. Existe só pra permitir uma consulta
+// (`where('escolaIds','array-contains', escolaId)`) que a regra de
+// segurança consegue validar sem custo extra por documento (ver
+// souGestorDeEscolaEmComum nas rules) — abrirEquipe() usa isso pra
+// encontrar TODOS os membros de uma escola, mesmo quem está com outra
+// escola ativa no momento (o campo achatado `escolaId` só reflete a
+// escola ativa, então sozinho ele não bastava pra isso).
+function escolaIdsFromEscolas(escolas) {
+  return (escolas || []).map(e => e.escolaId).filter(Boolean);
+}
+
 /* ── Lookup de códigos de escola (coleção codigosEscolas) ──
    Substitui as antigas consultas `escolas.where('codigo','==',x)`.
    Essas consultas exigiam LISTAR a coleção `escolas` sem filtrar por
@@ -4152,7 +4164,12 @@ auth.onAuthStateChanged(async (user) => {
       let escolas = Array.isArray(profData.escolas) ? profData.escolas.slice() : [];
       if (escolas.length === 0 && profData.escolaId) {
         escolas = [{ escolaId: profData.escolaId, escolaNome: profData.escolaNome||'', role: profData.role||'professor' }];
-        await db.collection('professores').doc(user.uid).set({ escolas }, { merge: true });
+        await db.collection('professores').doc(user.uid).set({ escolas, escolaIds: escolaIdsFromEscolas(escolas) }, { merge: true });
+      } else if (!Array.isArray(profData.escolaIds) || profData.escolaIds.length !== escolas.length) {
+        // Backfill: cadastro já tinha escolas[] mas ainda não tinha o campo
+        // escolaIds (usado pela gestão pra te encontrar na equipe mesmo
+        // quando esta não é sua escola ativa no momento — ver abrirEquipe()).
+        db.collection('professores').doc(user.uid).set({ escolaIds: escolaIdsFromEscolas(escolas) }, { merge: true }).catch(()=>{});
       }
       profData.escolas = escolas;
       app.professor = profData;
@@ -4321,6 +4338,7 @@ async function vincularProfessor(escolaId, escolaNome, role, disciplinasSalvar) 
     email:      u.email,
     foto:       cur.foto || u.photoURL || '',
     escolas,
+    escolaIds: escolaIdsFromEscolas(escolas),
     escolaAtivaId: escolaId,
     // legado (compat)
     escolaId, escolaNome, role,
@@ -4876,7 +4894,7 @@ async function sairEscola() {
     const escolaIdSair = app.escolaId;
     const ref = db.collection('professores').doc(app.user.uid);
     const escolas = (app.professor?.escolas || []).filter(e => e.escolaId !== escolaIdSair);
-    const patch = { escolas };
+    const patch = { escolas, escolaIds: escolaIdsFromEscolas(escolas) };
     // Limpa legado se for da escola que está saindo
     if (app.professor?.escolaId === escolaIdSair) {
       patch.escolaId   = firebase.firestore.FieldValue.delete();
@@ -4962,6 +4980,7 @@ async function excluirEscola() {
         const escolas = (data.escolas || []).filter(e => e.escolaId !== escolaId);
         const patch = {
           escolas,
+          escolaIds: escolaIdsFromEscolas(escolas),
           escolaId:   firebase.firestore.FieldValue.delete(),
           escolaNome: firebase.firestore.FieldValue.delete(),
           role:       firebase.firestore.FieldValue.delete()
@@ -5019,7 +5038,7 @@ async function removerProfessor(uid) {
     const snap = await ref.get();
     const data = snap.exists ? snap.data() : {};
     const escolas = (data.escolas || []).filter(e => e.escolaId !== app.escolaId);
-    const patch = { escolas };
+    const patch = { escolas, escolaIds: escolaIdsFromEscolas(escolas) };
     // Só limpa os campos achatados (compat) se a escola removida era a ativa dele
     if (data.escolaId === app.escolaId) {
       patch.escolaId = null; patch.escolaNome = null; patch.role = null;
@@ -5069,7 +5088,7 @@ async function ativarEscola(escolaId, opts = {}) {
     // Remove do array
     const profRef = db.collection('professores').doc(app.user.uid);
     const escolas = (app.professor?.escolas || []).filter(e => e.escolaId !== escolaId);
-    await profRef.set({ escolas }, { merge: true });
+    await profRef.set({ escolas, escolaIds: escolaIdsFromEscolas(escolas) }, { merge: true });
     app.professor.escolas = escolas;
     if (escolas.length === 0) {
       app.escolaId = null; app.escola = null;
@@ -5423,7 +5442,19 @@ async function executarExportacao(idsTurmasSelecionadas) {
       provaIdMap[id] = novaRef.id;
     }
 
-    // 4) Resultados das provas exportadas
+    // ── COMMIT FASE A: turmas + alunos + provas ──
+    // Precisa terminar (e ficar de fato persistido) ANTES de criar os
+    // resultados: a regra de criação de resultado exige exists() na prova
+    // correspondente, e o Firestore avalia isso contra o estado JÁ
+    // CONFIRMADO do banco — não contra outras escritas do mesmo lote ainda
+    // não commitadas. Colocar provas e resultados no mesmo batch fazia a
+    // prova "não existir" do ponto de vista da regra, e o lote inteiro
+    // (turmas, alunos, provas e resultados juntos) era negado.
+    finalizarBatch();
+    for (const b of batches) await b.commit();
+
+    // ── FASE 3: resultados (batch novo, só depois que as provas acima já existem de verdade) ──
+    batch = db.batch(); opsNoBatch = 0; batches.length = 0;
     let numResultadosCopiados = 0;
     for (const r of resultadosOrigem) {
       if (!provaIdMap[r.provaId]) continue;
@@ -5443,6 +5474,7 @@ async function executarExportacao(idsTurmasSelecionadas) {
       numResultadosCopiados++;
     }
 
+    // ── COMMIT FASE B: resultados ──
     finalizarBatch();
     for (const b of batches) await b.commit();
 
@@ -5652,22 +5684,26 @@ async function abrirEquipe() {
     // única consulta que bate com a regra de segurança (souGestorDaEscola
     // depende exatamente do campo escolaId, e é isso que filtramos aqui).
     //
-    // Limitação conhecida: um professor multi-escola que participa desta
-    // escola mas está com OUTRA escola ativa no momento não aparece
-    // nesta lista (o campo escolaId "achatado" só reflete a escola ativa
-    // de cada professor). Antes havia aqui uma tentativa de cobrir esse
-    // caso com um db.collection('professores').get() sem filtro nenhum
-    // — mas isso é sempre negado pelas regras (elas dependem de campos do
+    // Consulta por `escolaIds` (array com TODAS as escolas do professor,
+    // mantido por escolaIdsFromEscolas() em todo lugar que grava
+    // escolas[]) — assim encontra o membro mesmo que a escola ativa dele
+    // no momento seja outra. Antes isso usava só o campo achatado
+    // `escolaId` (só reflete a escola ATIVA), então um professor que
+    // tinha acabado de trocar de escola ativa "sumia" da equipe aqui,
+    // mesmo continuando membro por trás. Um `db.collection('professores')
+    // .get()` sem filtro nenhum foi tentado antes pra cobrir esse caso,
+    // mas isso é sempre negado pelas regras (elas dependem de campos do
     // documento, e uma listagem sem filtro correspondente não tem como
-    // ser validada), e era exatamente o erro "Missing or insufficient
+    // ser validada) — era exatamente o erro "Missing or insufficient
     // permissions" ao abrir a Equipe.
-    const snap = await db.collection('professores').where('escolaId', '==', app.escolaId).get();
+    const snap = await db.collection('professores').where('escolaIds', 'array-contains', app.escolaId).get();
     const byId = {};
-    snap.docs.forEach(d => { byId[d.id] = { uid: d.id, ...d.data() }; });
-    let membros = Object.values(byId).map(m => ({
-      ...m,
-      papelNesta: m.role || 'professor'
-    }));
+    snap.docs.forEach(d => {
+      const data = d.data();
+      const vinc = (data.escolas || []).find(e => e.escolaId === app.escolaId);
+      byId[d.id] = { uid: d.id, ...data, papelNesta: vinc?.role || data.role || 'professor' };
+    });
+    let membros = Object.values(byId);
     // Ordena: gestor > coordenador > professor
     const ord = { gestor:0, coordenador:1, professor:2 };
     membros.sort((a,b)=>(ord[a.papelNesta]??9)-(ord[b.papelNesta]??9) || (a.nome||'').localeCompare(b.nome||''));
@@ -5728,7 +5764,7 @@ async function alterarPapelMembro(uid, novoPapel) {
     if (idx >= 0) escolas[idx] = { ...escolas[idx], role: novoPapel };
     else escolas.push({ escolaId: app.escolaId, escolaNome: app.escola.nome, role: novoPapel });
 
-    const patch = { escolas };
+    const patch = { escolas, escolaIds: escolaIdsFromEscolas(escolas) };
     if (data.escolaId === app.escolaId) patch.role = novoPapel;
     if (data.escolaAtivaId === app.escolaId) patch.role = novoPapel;
     await ref.set(patch, { merge: true });
