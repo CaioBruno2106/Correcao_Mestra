@@ -4921,9 +4921,9 @@ async function excluirEscola() {
   const btnEl = document.getElementById('btn-confirmar-exclusao');
   if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Excluindo...'; }
   try {
-    // Excluir sub-coleções em lotes
-    const colecoes = ['provas','turmas','alunos','resultados'];
-    for (const col of colecoes) {
+    // Turmas e alunos: sem dependência de campos do documento na regra,
+    // .get() sem filtro funciona normalmente.
+    for (const col of ['turmas','alunos']) {
       const snap = await db.collection('escolas').doc(escolaId).collection(col).get();
       if (!snap.empty) {
         const batch = db.batch();
@@ -4932,15 +4932,43 @@ async function excluirEscola() {
       }
     }
 
+    // Provas e resultados: a regra de leitura depende de campos do
+    // próprio documento (escopo, criadoPor...) — um .get() sem filtro
+    // nelas é sempre negado (mesmo problema de sempre nesta app). Usa as
+    // mesmas consultas filtradas por "motivo de visibilidade" que o
+    // resto do app já usa. Limitação: provas "só eu" de OUTROS
+    // professores não aparecem aqui pra gestão (por design, nem a
+    // gestão vê provas particulares alheias) e ficam órfãs — inacessíveis
+    // depois que a escola for excluída, mas não removidas fisicamente.
+    const provasVisiveis = await buscarTodasProvasVisiveis(escolaId);
+    if (provasVisiveis.length) {
+      const batch = db.batch();
+      provasVisiveis.forEach(p => batch.delete(db.collection('escolas').doc(escolaId).collection('provas').doc(p.id)));
+      await batch.commit();
+    }
+    const resultadosVisiveis = await buscarTodosResultadosVisiveis(escolaId);
+    if (resultadosVisiveis.length) {
+      const batch = db.batch();
+      resultadosVisiveis.forEach(r => batch.delete(db.collection('escolas').doc(escolaId).collection('resultados').doc(r.id)));
+      await batch.commit();
+    }
+
     // Desvincular todos os professores desta escola
     const profSnap = await db.collection('professores').where('escolaId','==',escolaId).get();
     if (!profSnap.empty) {
       const batchProf = db.batch();
-      profSnap.docs.forEach(d => batchProf.update(d.ref, {
-        escolaId:   firebase.firestore.FieldValue.delete(),
-        escolaNome: firebase.firestore.FieldValue.delete(),
-        role:       firebase.firestore.FieldValue.delete()
-      }));
+      profSnap.docs.forEach(d => {
+        const data = d.data();
+        const escolas = (data.escolas || []).filter(e => e.escolaId !== escolaId);
+        const patch = {
+          escolas,
+          escolaId:   firebase.firestore.FieldValue.delete(),
+          escolaNome: firebase.firestore.FieldValue.delete(),
+          role:       firebase.firestore.FieldValue.delete()
+        };
+        if (data.escolaAtivaId === escolaId) patch.escolaAtivaId = firebase.firestore.FieldValue.delete();
+        batchProf.update(d.ref, patch);
+      });
       await batchProf.commit();
     }
 
@@ -4967,51 +4995,10 @@ async function excluirEscola() {
 
 /* ══════════════════════════════════════
    GESTÃO DE EQUIPE (só para gestor)
+   A implementação de abrirEquipe() está mais abaixo (junto com
+   alterarPapelMembro/confirmarRemoverProf) — ela já cobre listar,
+   promover, rebaixar e remover; esta seção só reservava o cabeçalho.
 ══════════════════════════════════════ */
-async function abrirEquipe() {
-  showModal(`
-    <div class="modal-handle"></div>
-    <div class="modal-title">Equipe da escola</div>
-    <div style="display:flex;justify-content:center;padding:16px 0">
-      <div class="spinner" style="width:28px;height:28px;border-width:3px;color:var(--cyan)"></div>
-    </div>
-  `);
-  try {
-    const snap = await db.collection('professores')
-      .where('escolaId', '==', app.escolaId)
-      .get();
-    const membros = snap.docs.map(d => ({ uid: d.id, ...d.data() }))
-      .filter(m => m.role !== 'gestor'); // não lista o próprio gestor
-    const lista = membros.length === 0
-      ? `<div style="text-align:center;padding:24px 0;color:var(--text-muted);font-size:13px">
-           Nenhum professor vinculado ainda.<br>Compartilhe o código da escola.
-         </div>`
-      : membros.map(m => `
-        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border2)">
-          <div style="width:36px;height:36px;border-radius:50%;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--cyan);flex-shrink:0">
-            ${(m.nome||'?').trim().split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase()}
-          </div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(m.nome||'—')}</div>
-            <div style="font-size:12px;color:var(--text-muted)">${escapeHtml(m.email||'')}</div>
-          </div>
-          <button onclick="confirmarRemoverProf('${m.uid}','${escapeHtml(m.nome||'')}')"
-            style="padding:6px 10px;border-radius:8px;background:rgba(227,27,35,0.1);border:1px solid rgba(227,27,35,0.25);color:var(--red);font-size:12px;font-weight:600;cursor:pointer">
-            Remover
-          </button>
-        </div>`).join('');
-    closeModal();
-    showModal(`
-      <div class="modal-handle"></div>
-      <div class="modal-title">Equipe · ${membros.length} professor${membros.length!==1?'es':''}</div>
-      <div style="max-height:55vh;overflow-y:auto">${lista}</div>
-      <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>
-    `);
-  } catch(e) {
-    closeModal();
-    toast('Erro ao carregar equipe: '+e.message, 'error');
-  }
-}
 
 function confirmarRemoverProf(uid, nome) {
   showModal(`
@@ -5028,7 +5015,19 @@ function confirmarRemoverProf(uid, nome) {
 
 async function removerProfessor(uid) {
   try {
-    await db.collection('professores').doc(uid).update({ escolaId: null, escolaNome: null, role: null });
+    const ref = db.collection('professores').doc(uid);
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : {};
+    const escolas = (data.escolas || []).filter(e => e.escolaId !== app.escolaId);
+    const patch = { escolas };
+    // Só limpa os campos achatados (compat) se a escola removida era a ativa dele
+    if (data.escolaId === app.escolaId) {
+      patch.escolaId = null; patch.escolaNome = null; patch.role = null;
+    }
+    if (data.escolaAtivaId === app.escolaId) {
+      patch.escolaAtivaId = null;
+    }
+    await ref.set(patch, { merge: true });
     closeModal();
     toast('Professor removido da escola', 'success');
   } catch(e) {
@@ -5042,6 +5041,28 @@ async function removerProfessor(uid) {
 ═══════════════════════════════════════════════════════════════════ */
 
 async function ativarEscola(escolaId, opts = {}) {
+  const vinculo = (app.professor?.escolas || []).find(e => e.escolaId === escolaId);
+  const role = vinculo?.role || 'professor';
+
+  // IMPORTANTE: grava o vínculo (escolaId/escolaAtivaId/role) no cadastro
+  // do professor ANTES de ler o documento da escola. A regra de leitura
+  // de `escolas/{escolaId}` (souDaEscola) depende exatamente desse campo
+  // — lendo antes de escrever, trocar para uma escola que ainda não é a
+  // "ativa" atual é sempre negado (erro de permissão), mesmo você já
+  // sendo membro dela. Ver o mesmo padrão em vincularProfessor().
+  app.escolaId = escolaId;
+  if (app.professor) {
+    app.professor.escolaAtivaId = escolaId;
+    app.professor.role = role;
+    app.professor.escolaId = escolaId;
+    app.professor.escolaNome = vinculo?.escolaNome || app.professor.escolaNome || '';
+  }
+  try {
+    await db.collection('professores').doc(app.user.uid).set({
+      escolaAtivaId: escolaId, escolaId, escolaNome: vinculo?.escolaNome || '', role
+    }, { merge: true });
+  } catch(_) {}
+
   const escolaDoc = await db.collection('escolas').doc(escolaId).get();
   if (!escolaDoc.exists) {
     toast('Escola não encontrada — pode ter sido excluída.', 'error');
@@ -5058,21 +5079,14 @@ async function ativarEscola(escolaId, opts = {}) {
     return ativarEscola(escolas[0].escolaId);
   }
   const escolaData = escolaDoc.data();
-  const vinculo = (app.professor?.escolas || []).find(e => e.escolaId === escolaId);
-  const role = vinculo?.role || 'professor';
-  app.escolaId = escolaId;
-  app.escola   = escolaData;
-  app.professor.escolaAtivaId = escolaId;
-  app.professor.role = role;
-  app.professor.escolaId = escolaId;
-  app.professor.escolaNome = escolaData.nome;
+  app.escola = escolaData;
   // Limpa caches da escola anterior
   cache.turmas = cache.alunos = cache.provas = null;
-  try {
-    await db.collection('professores').doc(app.user.uid).set({
-      escolaAtivaId: escolaId, escolaId, escolaNome: escolaData.nome, role
-    }, { merge: true });
-  } catch(_) {}
+  // Corrige o nome, caso o vínculo local estivesse desatualizado
+  if (escolaData.nome && escolaData.nome !== app.professor.escolaNome) {
+    app.professor.escolaNome = escolaData.nome;
+    try { await db.collection('professores').doc(app.user.uid).set({ escolaNome: escolaData.nome }, { merge: true }); } catch(_) {}
+  }
   if (!opts.skipShowApp) showApp();
 }
 
@@ -5624,26 +5638,25 @@ async function abrirEquipe() {
     </div>
   `);
   try {
-    // Busca todos professores que tenham esta escola no array OU no campo legado
-    const [snapArr, snapLeg] = await Promise.all([
-      db.collection('professores').where('escolaAtivaId','==',app.escolaId).get().catch(()=>({docs:[]})),
-      db.collection('professores').where('escolaId','==',app.escolaId).get().catch(()=>({docs:[]}))
-    ]);
+    // Lista quem tem esta escola como escolaId "achatado" (compat) — a
+    // única consulta que bate com a regra de segurança (souGestorDaEscola
+    // depende exatamente do campo escolaId, e é isso que filtramos aqui).
+    //
+    // Limitação conhecida: um professor multi-escola que participa desta
+    // escola mas está com OUTRA escola ativa no momento não aparece
+    // nesta lista (o campo escolaId "achatado" só reflete a escola ativa
+    // de cada professor). Antes havia aqui uma tentativa de cobrir esse
+    // caso com um db.collection('professores').get() sem filtro nenhum
+    // — mas isso é sempre negado pelas regras (elas dependem de campos do
+    // documento, e uma listagem sem filtro correspondente não tem como
+    // ser validada), e era exatamente o erro "Missing or insufficient
+    // permissions" ao abrir a Equipe.
+    const snap = await db.collection('professores').where('escolaId', '==', app.escolaId).get();
     const byId = {};
-    [...snapArr.docs, ...snapLeg.docs].forEach(d => { byId[d.id] = { uid: d.id, ...d.data() }; });
-    // Também precisamos pegar quem tem no array `escolas` mas ativa é outra → busca ampla por segurança
-    const snapAll = await db.collection('professores').get();
-    snapAll.docs.forEach(d => {
-      const data = d.data();
-      const list = data.escolas || [];
-      if (list.some(e => e.escolaId === app.escolaId)) {
-        const vinc = list.find(e => e.escolaId === app.escolaId);
-        byId[d.id] = { uid: d.id, ...data, _roleNesta: vinc.role };
-      }
-    });
+    snap.docs.forEach(d => { byId[d.id] = { uid: d.id, ...d.data() }; });
     let membros = Object.values(byId).map(m => ({
       ...m,
-      papelNesta: m._roleNesta || ((m.escolaId===app.escolaId)?m.role:(m.escolas||[]).find(e=>e.escolaId===app.escolaId)?.role) || 'professor'
+      papelNesta: m.role || 'professor'
     }));
     // Ordena: gestor > coordenador > professor
     const ord = { gestor:0, coordenador:1, professor:2 };
