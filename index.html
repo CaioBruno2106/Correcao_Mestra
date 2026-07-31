@@ -3820,6 +3820,32 @@ function gerarCodigo() {
   return code;
 }
 
+/* ── Lookup de códigos de escola (coleção codigosEscolas) ──
+   Substitui as antigas consultas `escolas.where('codigo','==',x)`.
+   Essas consultas exigiam LISTAR a coleção `escolas` sem filtrar por
+   ID de documento, o que as regras de segurança (baseadas em
+   souDaEscola(escolaId)) sempre negam com "Missing or insufficient
+   permissions" — mesmo para usuários que teriam acesso ao resultado.
+   Um get() por ID de documento não sofre dessa restrição. */
+async function codigoEmUso(codigo) {
+  const doc = await db.collection('codigosEscolas').doc(codigo).get();
+  return doc.exists;
+}
+
+async function registrarCodigosEscola(escolaId, escolaNome, codigo, codigoGestao) {
+  await db.collection('codigosEscolas').doc(codigo).set({ escolaId, escolaNome, tipo: 'entrada' });
+  await db.collection('codigosEscolas').doc(codigoGestao).set({ escolaId, escolaNome, tipo: 'gestao' });
+}
+
+async function registrarCodigoEscola(codigo, escolaId, escolaNome, tipo) {
+  await db.collection('codigosEscolas').doc(codigo).set({ escolaId, escolaNome, tipo });
+}
+
+async function buscarPorCodigo(code) {
+  const doc = await db.collection('codigosEscolas').doc(code).get();
+  return doc.exists ? doc.data() : null; // { escolaId, escolaNome, tipo }
+}
+
 function initials(name) {
   if (!name) return '?';
   const parts = name.trim().split(' ');
@@ -4162,8 +4188,7 @@ async function criarEscola() {
     let codigo, exists = true;
     while (exists) {
       codigo = gerarCodigo();
-      const snap = await db.collection('escolas').where('codigo','==',codigo).limit(1).get();
-      exists = !snap.empty;
+      exists = await codigoEmUso(codigo);
     }
 
     // Código separado para coordenação/gestão (acesso completo, exceto excluir/editar escola)
@@ -4171,9 +4196,7 @@ async function criarEscola() {
     while (existsG) {
       codigoGestao = gerarCodigo();
       if (codigoGestao === codigo) continue;
-      const snapG = await db.collection('escolas').where('codigoGestao','==',codigoGestao).limit(1).get();
-      const snapG2 = await db.collection('escolas').where('codigo','==',codigoGestao).limit(1).get();
-      existsG = !snapG.empty || !snapG2.empty;
+      existsG = await codigoEmUso(codigoGestao);
     }
     const escolaRef = db.collection('escolas').doc();
     const escolaId  = escolaRef.id;
@@ -4183,6 +4206,7 @@ async function criarEscola() {
       criadoEm: firebase.firestore.FieldValue.serverTimestamp()
     };
     await escolaRef.set(escolaData);
+    await registrarCodigosEscola(escolaId, nome, codigo, codigoGestao);
 
     // Vincular professor como admin
     await vincularProfessor(escolaId, nome, 'gestor');
@@ -4208,22 +4232,21 @@ async function joinEscola() {
 
   setLoading('btn-join-escola', true);
   try {
-    let role = 'professor';
-    let snap = await db.collection('escolas').where('codigo','==',code).limit(1).get();
-    if (snap.empty) {
-      snap = await db.collection('escolas').where('codigoGestao','==',code).limit(1).get();
-      if (!snap.empty) role = 'coordenador';
-    }
-    if (snap.empty) {
+    const info = await buscarPorCodigo(code);
+    if (!info) {
       document.getElementById('join-error').classList.remove('hidden');
       setLoading('btn-join-escola', false);
       return;
     }
-    const escolaDoc  = snap.docs[0];
-    const escolaId   = escolaDoc.id;
-    const escolaData = escolaDoc.data();
+    const role     = info.tipo === 'gestao' ? 'coordenador' : 'professor';
+    const escolaId = info.escolaId;
 
-    await vincularProfessor(escolaId, escolaData.nome, role);
+    await vincularProfessor(escolaId, info.escolaNome, role);
+
+    // Agora que o professor já está vinculado, a leitura direta por ID
+    // é permitida pelas regras (souDaEscola passa a ser true).
+    const escolaSnap = await db.collection('escolas').doc(escolaId).get();
+    const escolaData = escolaSnap.exists ? escolaSnap.data() : { nome: info.escolaNome };
 
     app.escola   = escolaData;
     app.escolaId = escolaId;
@@ -5069,20 +5092,18 @@ async function criarOutraEscolaConfirm() {
     let codigo, exists=true;
     while (exists) {
       codigo = gerarCodigo();
-      const sn = await db.collection('escolas').where('codigo','==',codigo).limit(1).get();
-      exists = !sn.empty;
+      exists = await codigoEmUso(codigo);
     }
     let codigoGestao, existsG=true;
     while (existsG) {
       codigoGestao = gerarCodigo();
       if (codigoGestao===codigo) continue;
-      const a = await db.collection('escolas').where('codigoGestao','==',codigoGestao).limit(1).get();
-      const b = await db.collection('escolas').where('codigo','==',codigoGestao).limit(1).get();
-      existsG = !a.empty || !b.empty;
+      existsG = await codigoEmUso(codigoGestao);
     }
     const ref = db.collection('escolas').doc();
     const dados = { nome, cidade, rede, codigo, codigoGestao, criadoPor: app.user.uid, criadoEm: firebase.firestore.FieldValue.serverTimestamp() };
     await ref.set(dados);
+    await registrarCodigosEscola(ref.id, nome, codigo, codigoGestao);
     await vincularProfessor(ref.id, nome, 'gestor');
     closeModal();
     toast('Escola criada! Trocando...', 'success');
@@ -5113,32 +5134,28 @@ async function entrarOutraEscolaConfirm() {
   if (code.length !== 6) { toast('Código deve ter 6 caracteres', 'error'); return; }
   setLoading('btn-join-out', true);
   try {
-    let role = 'professor';
-    let snap = await db.collection('escolas').where('codigo','==',code).limit(1).get();
-    if (snap.empty) {
-      snap = await db.collection('escolas').where('codigoGestao','==',code).limit(1).get();
-      if (!snap.empty) role = 'coordenador';
-    }
-    if (snap.empty) {
+    const info = await buscarPorCodigo(code);
+    if (!info) {
       document.getElementById('m-join-err').classList.remove('hidden');
       setLoading('btn-join-out', false); return;
     }
-    const eDoc = snap.docs[0];
+    const role     = info.tipo === 'gestao' ? 'coordenador' : 'professor';
+    const escolaId = info.escolaId;
     // Já está vinculado?
-    const ja = (app.professor?.escolas || []).find(e => e.escolaId === eDoc.id);
+    const ja = (app.professor?.escolas || []).find(e => e.escolaId === escolaId);
     if (ja) {
       // Atualiza papel se for um upgrade (gestão > professor)
       const upgrade = role==='coordenador' && ja.role==='professor';
-      if (upgrade) await vincularProfessor(eDoc.id, eDoc.data().nome, 'coordenador');
+      if (upgrade) await vincularProfessor(escolaId, info.escolaNome, 'coordenador');
       closeModal();
       toast(upgrade?'Promovido(a) a coordenação!':'Você já participa desta escola.', 'success');
-      await ativarEscola(eDoc.id);
+      await ativarEscola(escolaId);
       return;
     }
-    await vincularProfessor(eDoc.id, eDoc.data().nome, role);
+    await vincularProfessor(escolaId, info.escolaNome, role);
     closeModal();
     toast('Vinculado(a) com sucesso!', 'success');
-    await ativarEscola(eDoc.id);
+    await ativarEscola(escolaId);
   } catch(e) { toast('Erro: '+e.message, 'error'); setLoading('btn-join-out', false); }
 }
 
@@ -5171,11 +5188,10 @@ async function gerarCodigoGestaoAgora() {
     while (existsG) {
       codigoGestao = gerarCodigo();
       if (codigoGestao===app.escola?.codigo) continue;
-      const a = await db.collection('escolas').where('codigoGestao','==',codigoGestao).limit(1).get();
-      const b = await db.collection('escolas').where('codigo','==',codigoGestao).limit(1).get();
-      existsG = !a.empty || !b.empty;
+      existsG = await codigoEmUso(codigoGestao);
     }
     await db.collection('escolas').doc(app.escolaId).set({ codigoGestao }, { merge: true });
+    await registrarCodigoEscola(codigoGestao, app.escolaId, app.escola?.nome || '', 'gestao');
     app.escola.codigoGestao = codigoGestao;
     mostrarCodigoGestao();
   } catch(e) { toast('Erro: '+e.message, 'error'); }
@@ -5208,6 +5224,9 @@ async function salvarEditarEscola() {
   setLoading('btn-salvar-esc', true);
   try {
     await db.collection('escolas').doc(app.escolaId).set({ nome, cidade, rede }, { merge: true });
+    // Mantém escolaNome sincronizado nos docs de lookup de código
+    if (app.escola?.codigo)       await db.collection('codigosEscolas').doc(app.escola.codigo).set({ escolaNome: nome }, { merge: true });
+    if (app.escola?.codigoGestao) await db.collection('codigosEscolas').doc(app.escola.codigoGestao).set({ escolaNome: nome }, { merge: true });
     app.escola.nome = nome; app.escola.cidade = cidade; app.escola.rede = rede;
     // Atualiza escolaNome no array do professor
     const escolas = (app.professor.escolas||[]).map(x => x.escolaId===app.escolaId?{...x, escolaNome: nome}:x);
