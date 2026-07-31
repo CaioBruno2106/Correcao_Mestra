@@ -5317,6 +5317,15 @@ async function exportarRevisar() {
     const nomeOrigem  = (app.professor.escolas.find(e=>e.escolaId===exportEsc.origemId)||{}).escolaNome || '';
     const nomeDestino = (app.professor.escolas.find(e=>e.escolaId===exportEsc.destinoId)||{}).escolaNome || '';
 
+    // Guarda a seleção numa variável em vez de embutir o JSON.stringify()
+    // direto no atributo onclick: JSON.stringify usa aspas DUPLAS, e o
+    // atributo onclick="..." também é delimitado por aspas duplas — o
+    // HTML quebra bem ali (o navegador fecha o atributo no primeiro "
+    // interno), e o botão fica com um onclick corrompido que nunca dispara,
+    // sem erro nenhum visível. Guardar num global e chamar sem argumento
+    // evita esse problema de vez.
+    exportEsc.idsTurmasSelecionadas = idsTurmas;
+
     showModal(`
       <div class="modal-handle"></div>
       <div class="modal-title">Confirmar exportação</div>
@@ -5333,7 +5342,7 @@ async function exportarRevisar() {
         As provas e resultados copiados passam a constar como criados por você.
         Ao final, <strong style="color:var(--text)">${escapeHtml(nomeDestino)}</strong> vira sua escola ativa.
       </div>
-      <button class="btn btn-cyan" id="btn-exp-confirmar" onclick="executarExportacao(${JSON.stringify(idsTurmas)})">Confirmar e exportar</button>
+      <button class="btn btn-cyan" id="btn-exp-confirmar" onclick="executarExportacao()">Confirmar e exportar</button>
       <button class="btn btn-ghost" onclick="exportarEscolherTurmas()">Voltar</button>
     `);
   } catch (e) {
@@ -5344,6 +5353,7 @@ async function exportarRevisar() {
 }
 
 async function executarExportacao(idsTurmasSelecionadas) {
+  idsTurmasSelecionadas = idsTurmasSelecionadas || exportEsc.idsTurmasSelecionadas || [];
   setLoading('btn-exp-confirmar', true);
   const meuUid = app.user.uid;
   const origemId  = exportEsc.origemId;
