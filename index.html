@@ -42,7 +42,11 @@ async function loadCache(force = false) {
   _loadCacheEmAndamento = (async () => {
     try {
       const tasks = [];
-      if (force || !cache.turmas) tasks.push(ref.turmas().orderBy('nome').get().then(s => cache.turmas = s.docs.map(d => ({ id: d.id, ...d.data() }))));
+      if (force || !cache.turmas) tasks.push(ref.turmas().orderBy('nome').get().then(s => {
+        const todas = s.docs.map(d => ({ id: d.id, ...d.data() }));
+        cache.turmasTodas = todas; // sem filtro — usado só pra checar se a turma existe DE VERDADE
+        cache.turmas = todas.filter(t => !(t.ocultaPara||[]).includes(app.user?.uid));
+      }));
       if (force || !cache.alunos) tasks.push(ref.alunos().orderBy('nome').get().then(s => cache.alunos = s.docs.map(d => ({ id: d.id, ...d.data() }))));
       if (force || !cache.provas) tasks.push(carregarProvas());
       await Promise.all(tasks);
@@ -102,15 +106,18 @@ function escapeHtml(s) {
 
 function turmaNomeById(id) {
   if (!id) return 'Sem turma';
-  const t = cache.turmas?.find(x => x.id === id);
+  const t = (cache.turmasTodas || cache.turmas)?.find(x => x.id === id);
   return t ? t.nome : 'Turma excluída';
 }
 
 // Alunos cujo turmaId aponta pra uma turma que não existe mais (a exclusão de
 // turma remove só o documento da turma — os alunos ficam com o vínculo velho
-// em vez de virarem "sem turma"). Usado pra oferecer a limpeza em lote.
+// em vez de virarem "sem turma"). Usa cache.turmasTodas (sem filtro de
+// ocultaPara) — senão um aluno de uma turma apenas OCULTA pra este professor
+// seria confundido com "turma excluída de verdade" e ofereceria excluir o
+// aluno em massa por engano.
 function alunosOrfaos() {
-  const idsValidos = new Set((cache.turmas || []).map(t => t.id));
+  const idsValidos = new Set((cache.turmasTodas || cache.turmas || []).map(t => t.id));
   return (cache.alunos || []).filter(a => a.turmaId && !idsValidos.has(a.turmaId));
 }
 
@@ -166,7 +173,7 @@ async function renderTurmas() {
   const cardHtml = (t) => {
     const nAlunos = (cache.alunos || []).filter(a => a.turmaId === t.id).length;
     const deGestao = t.criadoPorRole === 'gestor' || t.criadoPorRole === 'coordenador';
-    const podeExcluir = isGestor() || t.criadoPor === app.user?.uid;
+    const souDono = isGestor() || t.criadoPor === app.user?.uid;
     return `
       <div class="list-card" onclick="abrirTurma('${t.id}')" style="${t.arquivada?'opacity:.65':''}">
         <div class="list-card-icon blue">${escapeHtml((t.nome||'?')[0])}</div>
@@ -174,7 +181,7 @@ async function renderTurmas() {
           <div class="list-card-title">${escapeHtml(t.nome)} ${t.arquivada?'<span style="font-size:10px;color:var(--text-muted);font-weight:600">(arquivada)</span>':''}</div>
           <div class="list-card-sub">${escapeHtml(t.turno||'')} · ${escapeHtml(t.anoLetivo||'')} · ${nAlunos} aluno${nAlunos===1?'':'s'}${deGestao?' · criada pela gestão':''}</div>
         </div>
-        ${ podeExcluir ? `<button class="icon-btn danger" title="Excluir turma" onclick="event.stopPropagation();excluirTurma('${t.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : '' }
+        <button class="icon-btn danger" title="${souDono?'Excluir turma':'Remover da minha lista'}" onclick="event.stopPropagation();excluirTurma('${t.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
         <div class="list-card-arrow">›</div>
       </div>`;
   };
@@ -246,7 +253,7 @@ function openTurmaForm(turma) {
       ${edit ? 'Salvar alterações' : 'Criar turma'}
     </button>
     ${ edit ? `<button class="btn btn-ghost" onclick="toggleArquivarTurma('${turma.id}', ${!turma.arquivada})">${turma.arquivada ? 'Desarquivar turma' : 'Arquivar turma'}</button>` : '' }
-    ${ edit && (isGestor() || turma.criadoPor === app.user?.uid) ? `<button class="btn btn-danger" onclick="excluirTurma('${turma.id}')">Excluir turma</button>` : '' }
+    ${ edit ? `<button class="btn btn-danger" onclick="excluirTurma('${turma.id}')">${(isGestor() || turma.criadoPor === app.user?.uid) ? 'Excluir turma' : 'Remover da minha lista'}</button>` : '' }
     <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
   `);
 }
@@ -296,25 +303,60 @@ async function salvarTurma(id) {
 }
 
 function excluirTurma(id) {
-  const turma = cache.turmas.find(t => t.id === id);
-  if (turma && !(isGestor() || turma.criadoPor === app.user?.uid)) {
-    toast('Só é possível excluir turmas criadas por você. Você pode arquivá-la.', 'error');
+  const turma = (cache.turmasTodas || cache.turmas).find(t => t.id === id);
+  const souDono = isGestor() || turma?.criadoPor === app.user?.uid;
+  const nAlunos = (cache.alunos||[]).filter(a => a.turmaId === id).length;
+
+  if (!souDono) {
+    // Turma replicada/importada que este professor não criou: em vez de
+    // bloquear ou excluir de verdade (o que afetaria todo mundo que usa
+    // a turma), oferece só tirar ela da PRÓPRIA lista.
+    showModal(`
+      <div class="modal-handle"></div>
+      <div class="modal-title">Remover da minha lista?</div>
+      <div style="font-size:14px;color:var(--text-muted);line-height:1.5;">
+        <strong style="color:var(--text)">${escapeHtml(turma?.nome||'')}</strong> vai parar de aparecer
+        pra você, mas continua existindo normalmente pra gestão e pros demais professores
+        que a usam — nada é apagado.
+      </div>
+      <button class="btn btn-danger" onclick="ocultarTurmaParaMim('${id}')">Remover da minha lista</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    `);
     return;
   }
-  const nAlunos = (cache.alunos||[]).filter(a => a.turmaId === id).length;
+
   showModal(`
     <div class="modal-handle"></div>
     <div class="modal-title">Excluir turma?</div>
     <div style="font-size:14px;color:var(--text-muted);line-height:1.5;">
-      <strong style="color:var(--text)">${escapeHtml(turma?.nome||'')}</strong> será removida.
+      <strong style="color:var(--text)">${escapeHtml(turma?.nome||'')}</strong> será removida
+      <strong style="color:var(--text)">para todos</strong> da escola.
       ${nAlunos>0 ? `<br><br><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;display:inline-block;vertical-align:-2px;flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Esta turma tem <strong>${nAlunos} aluno(s)</strong>. Eles continuarão cadastrados, mas ficarão sem turma.` : ''}
     </div>
     <button class="btn btn-danger" onclick="confirmaExcluirTurma('${id}')">Sim, excluir</button>
     <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
   `);
 }
+
+// Some da lista de UM professor específico, sem afetar os demais — usado
+// quando ele não tem permissão (ou não faz sentido) excluir de verdade uma
+// turma replicada/importada que outros colegas ainda usam.
+async function ocultarTurmaParaMim(id) {
+  try {
+    await ref.turmas().doc(id).update({
+      ocultaPara: firebase.firestore.FieldValue.arrayUnion(app.user.uid)
+    });
+    cache.turmas = null; // força recarregar já filtrando essa turma
+    closeModal();
+    toast('Removida da sua lista', 'success');
+    if (app.currentNav === 'turmas') renderTurmas();
+    if (app.currentNav === 'inicio') loadDashStats();
+  } catch (e) {
+    toast('Erro: ' + e.message, 'error');
+  }
+}
 async function confirmaExcluirTurma(id) {
-  const turma = cache.turmas.find(t => t.id === id);
+  const turma = (cache.turmasTodas || cache.turmas).find(t => t.id === id);
   if (turma && !(isGestor() || turma.criadoPor === app.user?.uid)) {
     toast('Só é possível excluir turmas criadas por você.', 'error');
     return;
@@ -1818,6 +1860,7 @@ async function confirmaArquivarProva(id, arquivar) {
 const _origSignOut = signOut;
 signOut = async function() {
   cache.turmas = cache.alunos = cache.provas = null;
+  cacheRes.items = null; // idem — sem isso, resultados da escola ANTERIOR ficavam "grudados" no cache e pareciam ter sumido da atual
   return _origSignOut();
 };
 
@@ -4904,6 +4947,7 @@ async function sairEscola() {
     }
     await ref.set(patch, { merge: true });
     cache.turmas = cache.alunos = cache.provas = null;
+  cacheRes.items = null; // idem — sem isso, resultados da escola ANTERIOR ficavam "grudados" no cache e pareciam ter sumido da atual
     app.professor.escolas = escolas;
     closeModal();
     toast('Você saiu desta escola.', 'success');
@@ -4995,6 +5039,7 @@ async function excluirEscola() {
     await db.collection('escolas').doc(escolaId).delete();
 
     cache.turmas = cache.alunos = cache.provas = null;
+  cacheRes.items = null; // idem — sem isso, resultados da escola ANTERIOR ficavam "grudados" no cache e pareciam ter sumido da atual
     // Remove a escola excluída do array do usuário atual
     const escolasRest = (app.professor?.escolas || []).filter(e => e.escolaId !== escolaId);
     app.professor.escolas = escolasRest;
@@ -5101,6 +5146,7 @@ async function ativarEscola(escolaId, opts = {}) {
   app.escola = escolaData;
   // Limpa caches da escola anterior
   cache.turmas = cache.alunos = cache.provas = null;
+  cacheRes.items = null; // idem — sem isso, resultados da escola ANTERIOR ficavam "grudados" no cache e pareciam ter sumido da atual
   // Corrige o nome, caso o vínculo local estivesse desatualizado
   if (escolaData.nome && escolaData.nome !== app.professor.escolaNome) {
     app.professor.escolaNome = escolaData.nome;
@@ -5406,31 +5452,100 @@ async function executarExportacao(idsTurmasSelecionadas) {
     // ── FASE 2: ESCRITA (com o destino como escola ativa) ──
     await ativarEscolaSilenciosa(destinoId);
 
-    // 1) Turmas selecionadas
+    // Busca o que já existe no destino, pra reaproveitar em vez de duplicar
+    // caso esta mesma origem já tenha sido exportada antes. Marca cada
+    // turma/prova criada por este exportador com importadoDeEscolaId +
+    // importadoDeTurmaId/importadoDeProvaId (o ID do documento na
+    // ORIGEM) — assim uma reexportação reconhece "isso já veio daqui" só
+    // por esses dois campos, sem depender de nome (nomes podem mudar ou
+    // se repetir por coincidência).
+    const [turmasDestinoSnap, alunosDestinoSnap, provasDestinoVisiveis, resultadosDestinoVisiveis] = await Promise.all([
+      escCol(destinoId, 'turmas').get(),
+      escCol(destinoId, 'alunos').get(),
+      buscarTodasProvasVisiveis(destinoId),
+      buscarTodosResultadosVisiveis(destinoId),
+    ]);
+
+    const turmaExistentePorOrigem = new Map(); // turmaId da origem -> id no destino
+    turmasDestinoSnap.docs.forEach(d => {
+      const dt = d.data();
+      if (dt.importadoDeEscolaId === origemId && dt.importadoDeTurmaId) {
+        turmaExistentePorOrigem.set(dt.importadoDeTurmaId, d.id);
+      }
+    });
+
+    // 1) Turmas selecionadas — cria só as que ainda não foram importadas desta origem
     const turmaIdMap = {};
+    let turmasCriadas = 0, turmasReaproveitadas = 0;
     for (const t of turmasSelecionadas) {
       const { id, ...dados } = t;
+      const existenteId = turmaExistentePorOrigem.get(id);
+      if (existenteId) {
+        turmaIdMap[id] = existenteId;
+        turmasReaproveitadas++;
+        continue; // já existe — não duplica, e não sobrescreve edições locais da gestão
+      }
       const novaRef = escCol(destinoId, 'turmas').doc();
-      addSet(novaRef, dados);
+      addSet(novaRef, { ...dados, importadoDeEscolaId: origemId, importadoDeTurmaId: id });
       turmaIdMap[id] = novaRef.id;
+      turmasCriadas++;
     }
 
-    // 2) Alunos das turmas selecionadas
+    // Alunos já existentes no destino, agrupados por turma + nome normalizado
+    // (mesma normalização usada na integração com o Nota Mestra), pra casar
+    // com quem já foi importado antes ou até cadastrado manualmente.
+    const alunosPorTurmaNorm = new Map(); // turmaIdDestino -> Map(nomeNormalizado -> alunoIdDestino)
+    alunosDestinoSnap.docs.forEach(d => {
+      const da = d.data();
+      if (!alunosPorTurmaNorm.has(da.turmaId)) alunosPorTurmaNorm.set(da.turmaId, new Map());
+      alunosPorTurmaNorm.get(da.turmaId).set(_normNomeNM(da.nome), d.id);
+    });
+
+    // 2) Alunos das turmas selecionadas — cria só quem ainda não existe na turma de destino
     const alunoIdMap = {};
+    let alunosCriados = 0, alunosReaproveitados = 0;
     for (const a of alunosOrigem) {
       if (!turmaIdMap[a.turmaId]) continue; // aluno de turma não selecionada
+      const destinoTurmaId = turmaIdMap[a.turmaId];
+      const norm = _normNomeNM(a.nome);
+      const mapaTurma = alunosPorTurmaNorm.get(destinoTurmaId);
+      const existenteId = mapaTurma && mapaTurma.get(norm);
+      if (existenteId) {
+        alunoIdMap[a.id] = existenteId;
+        alunosReaproveitados++;
+        continue;
+      }
       const { id, ...dados } = a;
       const novaRef = escCol(destinoId, 'alunos').doc();
-      addSet(novaRef, { ...dados, turmaId: turmaIdMap[a.turmaId] });
+      addSet(novaRef, { ...dados, turmaId: destinoTurmaId });
       alunoIdMap[id] = novaRef.id;
+      alunosCriados++;
+      // Atualiza o mapa local pra não duplicar de novo se dois alunos da
+      // origem tiverem nomes normalizados iguais dentro deste mesmo run.
+      if (!alunosPorTurmaNorm.has(destinoTurmaId)) alunosPorTurmaNorm.set(destinoTurmaId, new Map());
+      alunosPorTurmaNorm.get(destinoTurmaId).set(norm, novaRef.id);
     }
 
-    // 3) Provas vinculadas às turmas selecionadas
+    const provaExistentePorOrigem = new Map(); // provaId da origem -> id no destino
+    provasDestinoVisiveis.forEach(p => {
+      if (p.importadoDeEscolaId === origemId && p.importadoDeProvaId) {
+        provaExistentePorOrigem.set(p.importadoDeProvaId, p.id);
+      }
+    });
+
+    // 3) Provas vinculadas às turmas selecionadas — cria só as que ainda não foram importadas desta origem
     const provaIdMap = {};
+    let provasCriadas = 0, provasReaproveitadas = 0;
     for (const p of provasOrigem) {
       const turmaIdsAntigas = (p.turmaIds && p.turmaIds.length ? p.turmaIds : (p.turmaId ? [p.turmaId] : []));
       const turmaIdsNovas = turmaIdsAntigas.filter(tid => turmaIdMap[tid]).map(tid => turmaIdMap[tid]);
       if (turmaIdsNovas.length === 0) continue; // nenhuma turma desta prova foi exportada
+      const existenteId = provaExistentePorOrigem.get(p.id);
+      if (existenteId) {
+        provaIdMap[p.id] = existenteId;
+        provasReaproveitadas++;
+        continue;
+      }
       const { id, ...dados } = p;
       const novaRef = escCol(destinoId, 'provas').doc();
       addSet(novaRef, {
@@ -5438,8 +5553,11 @@ async function executarExportacao(idsTurmasSelecionadas) {
         turmaIds: turmaIdsNovas,
         turmaId: turmaIdsNovas[0] || '',
         criadoPor: meuUid, // exigido pelas regras: quem cria o doc precisa ser o dono
+        importadoDeEscolaId: origemId,
+        importadoDeProvaId: id,
       });
       provaIdMap[id] = novaRef.id;
+      provasCriadas++;
     }
 
     // ── COMMIT FASE A: turmas + alunos + provas ──
@@ -5453,18 +5571,29 @@ async function executarExportacao(idsTurmasSelecionadas) {
     finalizarBatch();
     for (const b of batches) await b.commit();
 
+    // Resultados já existentes no destino (provaId+alunoId), pra não
+    // duplicar correções já importadas antes.
+    const resultadoExistente = new Set(
+      resultadosDestinoVisiveis.map(r => r.provaId + '|' + r.alunoId)
+    );
+
     // ── FASE 3: resultados (batch novo, só depois que as provas acima já existem de verdade) ──
     batch = db.batch(); opsNoBatch = 0; batches.length = 0;
-    let numResultadosCopiados = 0;
+    let numResultadosCopiados = 0, numResultadosReaproveitados = 0;
     for (const r of resultadosOrigem) {
       if (!provaIdMap[r.provaId]) continue;
       const novoAlunoId = alunoIdMap[r.alunoId];
       if (!novoAlunoId) continue; // aluno não foi exportado (turma não selecionada)
+      const novoProvaId = provaIdMap[r.provaId];
+      if (resultadoExistente.has(novoProvaId + '|' + novoAlunoId)) {
+        numResultadosReaproveitados++;
+        continue; // já existe uma correção deste aluno nesta prova no destino
+      }
       const { id, ...dados } = r;
       const novaRef = escCol(destinoId, 'resultados').doc();
       addSet(novaRef, {
         ...dados,
-        provaId: provaIdMap[r.provaId],
+        provaId: novoProvaId,
         turmaId: turmaIdMap[r.turmaId] || '',
         alunoId: novoAlunoId,
         // Denormalizado — tem que bater com a prova recém-criada no
@@ -5479,10 +5608,17 @@ async function executarExportacao(idsTurmasSelecionadas) {
     for (const b of batches) await b.commit();
 
     closeModal();
-    toast(`Exportado: ${Object.keys(turmaIdMap).length} turma(s), ${Object.keys(alunoIdMap).length} aluno(s), ${Object.keys(provaIdMap).length} prova(s), ${numResultadosCopiados} resultado(s).`, 'success');
+    const partes = [
+      `${turmasCriadas} turma(s) nova(s)${turmasReaproveitadas?` (+${turmasReaproveitadas} já existiam)`:''}`,
+      `${alunosCriados} aluno(s) novo(s)${alunosReaproveitados?` (+${alunosReaproveitados} já existiam)`:''}`,
+      `${provasCriadas} prova(s) nova(s)${provasReaproveitadas?` (+${provasReaproveitadas} já existiam)`:''}`,
+      `${numResultadosCopiados} resultado(s) novo(s)${numResultadosReaproveitados?` (+${numResultadosReaproveitados} já existiam)`:''}`,
+    ];
+    toast(`Exportado: ${partes.join(' · ')}.`, 'success');
 
     // Destino já é a escola ativa (fase 2 acima) — refaz o cache local
     cache.turmas = cache.alunos = cache.provas = null;
+  cacheRes.items = null; // idem — sem isso, resultados da escola ANTERIOR ficavam "grudados" no cache e pareciam ter sumido da atual
     loadDashStats();
     if (['turmas','alunos','provas'].includes(app.currentNav)) refreshCurrentView();
   } catch (e) {
