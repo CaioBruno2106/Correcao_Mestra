@@ -953,6 +953,34 @@ function renderWizard() {
   `;
 }
 
+/* Troca a escola ativa a partir do wizard de nova prova. Reaproveita
+   ativarEscola() (já cuida de trocar app.escolaId/app.escola, limpar
+   cache e gravar a escolaAtivaId do professor) em vez de duplicar essa
+   lógica — assim todo o resto do wizard (que sempre lê cache.turmas e
+   grava via ref.provas(), ambos amarrados a app.escolaId) continua
+   funcionando sem precisar ser reescrito pra aceitar um escolaId
+   explícito. */
+async function wizardTrocarEscola(novoEscolaId) {
+  if (!novoEscolaId || novoEscolaId === app.escolaId) return;
+  toast('Trocando de escola...', '');
+  // Turmas/equipe/destinatários são específicos de cada escola — zera
+  // pra não carregar seleção da escola anterior pra escola nova.
+  wizard.data.turmaIds = [];
+  wizard.data.disciplinasConfig = [];
+  wizard.data.professoresDestinatarios = [];
+  window._equipeProfessores = null;
+  _equipeCacheTs = 0;
+  try {
+    await ativarEscola(novoEscolaId, { skipShowApp: true });
+    await loadCache(true);
+    wizard.data.escopo = isGestor() ? 'escola' : 'proprio';
+    if (isGestor()) await carregarEquipe();
+  } catch (e) {
+    toast('Erro ao trocar de escola: ' + e.message, 'error');
+  }
+  renderWizard();
+}
+
 function wizardBack() { if (wizard.step>1) { wizard.step--; renderWizard(); } }
 function wizardNext() { if (wizard.step<4) { wizard.step++; renderWizard(); } }
 
@@ -967,6 +995,16 @@ function wizardStep1() {
     <div class="wizard-step-title">Dados básicos</div>
     <div class="wizard-step-sub">Informações de identificação da prova.</div>
     <div class="wizard-body">
+      ${ (!wizard.editId && (app.professor?.escolas?.length || 0) > 1) ? `
+      <div class="input-group">
+        <label class="input-label">Escola</label>
+        <select class="input" id="w-escola" onchange="wizardTrocarEscola(this.value)">
+          ${app.professor.escolas.map(e => `<option value="${e.escolaId}" ${e.escolaId===app.escolaId?'selected':''}>${escapeHtml(e.escolaNome||'—')}</option>`).join('')}
+        </select>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.5">
+          A prova será criada nesta escola — trocar aqui também troca sua escola ativa.
+        </div>
+      </div>` : '' }
       <div class="input-group">
         <label class="input-label">Nome da prova</label>
         <input class="input" id="w-nome" type="text" maxlength="60"
@@ -5058,6 +5096,7 @@ function abrirSeletorEscolas() {
     <div style="max-height:45vh;overflow-y:auto;margin-bottom:8px">${itens}</div>
     <button class="btn btn-cyan" onclick="iniciarCriarOutraEscola()">+ Criar nova escola</button>
     <button class="btn btn-secondary" onclick="iniciarEntrarOutraEscola()">Entrar com código em outra escola</button>
+    ${ escolas.length > 1 ? `<button class="btn btn-secondary" onclick="closeModal();iniciarExportarDados()">Exportar turmas/provas para outra escola</button>` : '' }
     <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>
   `);
 }
@@ -5067,6 +5106,334 @@ async function trocarEscolaAtiva(escolaId) {
   closeModal();
   toast('Carregando escola...', '');
   await ativarEscola(escolaId);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   EXPORTAR DADOS ENTRE ESCOLAS
+   Copia turmas + alunos + provas + resultados de uma escola (origem)
+   pra outra (destino), ambas escolas que o professor logado participa.
+   Uso típico: mover dados de uma escola de teste pra escola real.
+
+   Como os IDs de documento são gerados de novo no destino, cada etapa
+   monta um mapa (id antigo → id novo) e usa esse mapa pra corrigir as
+   referências nas etapas seguintes (aluno.turmaId, prova.turmaIds,
+   resultado.provaId/turmaId/alunoId).
+
+   DUAS PEGADINHAS DE REGRAS DE SEGURANÇA que este módulo precisa
+   respeitar (as mesmas que já apareceram antes neste app):
+
+   1) souDaEscola()/souGestorDaEscola() só enxergam a ESCOLA ATIVA do
+      professor (claim do token / campo escolaId do cadastro) — não
+      existe um "souDaEscola desta OUTRA escola que também participo".
+      Então não dá pra ler da origem e escrever no destino ao mesmo
+      tempo: é preciso ativar a origem pra ler, e só depois ativar o
+      destino pra escrever. Ver ativarEscolaSilenciosa() abaixo.
+
+   2) provas/resultados têm regra de LEITURA que depende de campos do
+      próprio documento (escopo, criadoPor, destinatários — ver
+      provaLegivel/provaLegivelDenormalizada nas rules). Um .get() sem
+      filtro nessas coleções é sempre negado por inteiro pelo Firestore
+      ("regras de segurança não são filtros"). Por isso reaproveitamos
+      aqui a mesma técnica de consultas separadas por "motivo de
+      visibilidade" que carregarProvas()/loadResultados() já usam.
+
+   IMPORTANTE sobre permissões: as regras exigem que provas.criadoPor
+   (e o provaCriadoPor denormalizado em resultados) seja igual a quem
+   grava o documento. Por isso, ao copiar, sempre gravamos
+   criadoPor/provaCriadoPor como o UID de quem está rodando a
+   exportação — não o autor original (que pode nem pertencer à escola
+   de destino).
+═══════════════════════════════════════════════════════════════════ */
+const exportEsc = { origemId: null, destinoId: null, turmas: [] };
+
+function escCol(escolaId, sub) {
+  return db.collection('escolas').doc(escolaId).collection(sub);
+}
+
+// Troca a escola ativa (se ainda não for a pedida) sem navegar de tela
+// — só o necessário pra souDaEscola()/isGestor() passarem a refletir a
+// escola certa antes de ler ou escrever nela.
+async function ativarEscolaSilenciosa(escolaId) {
+  if (app.escolaId === escolaId) return;
+  await ativarEscola(escolaId, { skipShowApp: true });
+}
+
+// Mesma lógica de carregarProvas(), mas parametrizada por escolaId em
+// vez de amarrada a app.escolaId/ref — chame só depois de garantir que
+// escolaId é a escola ATIVA (ativarEscolaSilenciosa).
+async function buscarTodasProvasVisiveis(escolaId) {
+  const uid = app.user?.uid;
+  const gestor = isGestor();
+  const porId = new Map();
+  const addDocs = snap => snap.docs.forEach(d => { if (!porId.has(d.id)) porId.set(d.id, { id: d.id, ...d.data() }); });
+  const col = escCol(escolaId, 'provas');
+  if (gestor) {
+    addDocs(await col.where('escopo', '!=', 'proprio').get());
+  } else {
+    const [s1, s2, s3, s4] = await Promise.all([
+      col.where('criadoPor', '==', uid).get(),
+      col.where('escopo', '==', 'escola').where('professoresDestinatarios', '==', []).get(),
+      col.where('escopo', '==', 'escola').where('professoresDestinatarios', 'array-contains', uid).get(),
+      col.where('disciplinasProfessorUids', 'array-contains', uid).get(),
+    ]);
+    [s1, s2, s3, s4].forEach(addDocs);
+  }
+  return Array.from(porId.values());
+}
+
+// Idem, para resultados (mesma lógica de loadResultados()).
+async function buscarTodosResultadosVisiveis(escolaId) {
+  const uid = app.user?.uid;
+  const gestor = isGestor();
+  const porId = new Map();
+  const addDocs = snap => snap.docs.forEach(d => { if (!porId.has(d.id)) porId.set(d.id, { id: d.id, ...d.data() }); });
+  const col = escCol(escolaId, 'resultados');
+  if (gestor) {
+    addDocs(await col.where('provaEscopo', '!=', 'proprio').get());
+  } else {
+    const [s1, s2, s3, s4] = await Promise.all([
+      col.where('provaCriadoPor', '==', uid).get(),
+      col.where('provaEscopo', '==', 'escola').where('provaProfessoresDestinatarios', '==', []).get(),
+      col.where('provaEscopo', '==', 'escola').where('provaProfessoresDestinatarios', 'array-contains', uid).get(),
+      col.where('provaDisciplinasProfessorUids', 'array-contains', uid).get(),
+    ]);
+    [s1, s2, s3, s4].forEach(addDocs);
+  }
+  return Array.from(porId.values());
+}
+
+function iniciarExportarDados() {
+  const escolas = app.professor?.escolas || [];
+  if (escolas.length < 2) { toast('Você precisa participar de pelo menos 2 escolas', 'error'); return; }
+  exportEsc.origemId  = escolas.find(e => e.escolaId !== app.escolaId)?.escolaId || escolas[0].escolaId;
+  exportEsc.destinoId = app.escolaId;
+  showModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">Exportar dados para outra escola</div>
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;line-height:1.5">
+      Copia turmas, alunos, provas e resultados de uma escola pra outra.
+      Os dados originais <strong style="color:var(--text)">não são apagados</strong> da escola de origem.
+      Só é possível exportar o que você já consegue ver na escola de origem (provas particulares de outros professores não entram).
+    </div>
+    <div class="input-group">
+      <label class="input-label">De (origem)</label>
+      <select class="input" id="exp-origem" onchange="exportEsc.origemId=this.value">
+        ${escolas.map(e => `<option value="${e.escolaId}" ${e.escolaId===exportEsc.origemId?'selected':''}>${escapeHtml(e.escolaNome||'—')}</option>`).join('')}
+      </select>
+    </div>
+    <div class="input-group">
+      <label class="input-label">Para (destino)</label>
+      <select class="input" id="exp-destino" onchange="exportEsc.destinoId=this.value">
+        ${escolas.map(e => `<option value="${e.escolaId}" ${e.escolaId===exportEsc.destinoId?'selected':''}>${escapeHtml(e.escolaNome||'—')}</option>`).join('')}
+      </select>
+    </div>
+    <button class="btn btn-cyan" id="btn-exp-continuar" onclick="exportarEscolherTurmas()">Continuar</button>
+    <button class="btn btn-ghost" onclick="abrirSeletorEscolas()">Voltar</button>
+  `);
+}
+
+async function exportarEscolherTurmas() {
+  exportEsc.origemId  = document.getElementById('exp-origem').value;
+  exportEsc.destinoId = document.getElementById('exp-destino').value;
+  if (exportEsc.origemId === exportEsc.destinoId) {
+    toast('Escolha duas escolas diferentes', 'error'); return;
+  }
+  setLoading('btn-exp-continuar', true);
+  try {
+    await ativarEscolaSilenciosa(exportEsc.origemId);
+    const snap = await escCol(exportEsc.origemId, 'turmas').get();
+    exportEsc.turmas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (e) {
+    toast('Erro ao ler turmas da origem: ' + e.message, 'error');
+    setLoading('btn-exp-continuar', false);
+    return;
+  }
+  setLoading('btn-exp-continuar', false);
+
+  if (exportEsc.turmas.length === 0) {
+    toast('A escola de origem não tem turmas', 'error');
+    return;
+  }
+
+  showModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">Quais turmas exportar?</div>
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:10px;line-height:1.5">
+      Alunos, provas e resultados vinculados a estas turmas vão junto automaticamente.
+    </div>
+    <div style="margin-bottom:8px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="exp-todas" checked onchange="document.querySelectorAll('.exp-turma-chk').forEach(c=>c.checked=this.checked)">
+        Selecionar todas
+      </label>
+    </div>
+    <div style="max-height:40vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+      ${exportEsc.turmas.map(t => `
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:8px;background:var(--surface2);border-radius:8px;cursor:pointer">
+          <input type="checkbox" class="exp-turma-chk" value="${t.id}" checked>
+          ${escapeHtml(t.nome)} <span style="color:var(--text-dim);font-size:11px">(${escapeHtml(t.anoLetivo||'')})</span>
+        </label>`).join('')}
+    </div>
+    <button class="btn btn-cyan" id="btn-exp-revisar" onclick="exportarRevisar()">Revisar exportação</button>
+    <button class="btn btn-ghost" onclick="iniciarExportarDados()">Voltar</button>
+  `);
+}
+
+async function exportarRevisar() {
+  const idsTurmas = [...document.querySelectorAll('.exp-turma-chk:checked')].map(c => c.value);
+  if (idsTurmas.length === 0) { toast('Selecione ao menos uma turma', 'error'); return; }
+  setLoading('btn-exp-revisar', true);
+  try {
+    await ativarEscolaSilenciosa(exportEsc.origemId);
+    const setTurmas = new Set(idsTurmas);
+    const [alunosSnap, provas] = await Promise.all([
+      escCol(exportEsc.origemId, 'alunos').get(),
+      buscarTodasProvasVisiveis(exportEsc.origemId),
+    ]);
+    const alunos = alunosSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(a => setTurmas.has(a.turmaId));
+    const provasFiltradas = provas.filter(p => (p.turmaIds||[]).some(tid => setTurmas.has(tid)) || setTurmas.has(p.turmaId));
+
+    let numResultados = 0;
+    if (provasFiltradas.length) {
+      const provaIds = new Set(provasFiltradas.map(p => p.id));
+      const resultados = await buscarTodosResultadosVisiveis(exportEsc.origemId);
+      numResultados = resultados.filter(r => provaIds.has(r.provaId)).length;
+    }
+
+    const nomeOrigem  = (app.professor.escolas.find(e=>e.escolaId===exportEsc.origemId)||{}).escolaNome || '';
+    const nomeDestino = (app.professor.escolas.find(e=>e.escolaId===exportEsc.destinoId)||{}).escolaNome || '';
+
+    showModal(`
+      <div class="modal-handle"></div>
+      <div class="modal-title">Confirmar exportação</div>
+      <div style="font-size:13px;line-height:1.8;margin-bottom:14px">
+        De <strong style="color:var(--text)">${escapeHtml(nomeOrigem)}</strong>
+        para <strong style="color:var(--text)">${escapeHtml(nomeDestino)}</strong>:
+        <br>• ${idsTurmas.length} turma(s)
+        <br>• ${alunos.length} aluno(s)
+        <br>• ${provasFiltradas.length} prova(s)
+        <br>• ${numResultados} resultado(s) de correção
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.5">
+        Os dados serão <strong style="color:var(--text)">copiados</strong> (a origem continua intacta).
+        As provas e resultados copiados passam a constar como criados por você.
+        Ao final, <strong style="color:var(--text)">${escapeHtml(nomeDestino)}</strong> vira sua escola ativa.
+      </div>
+      <button class="btn btn-cyan" id="btn-exp-confirmar" onclick="executarExportacao(${JSON.stringify(idsTurmas)})">Confirmar e exportar</button>
+      <button class="btn btn-ghost" onclick="exportarEscolherTurmas()">Voltar</button>
+    `);
+  } catch (e) {
+    toast('Erro ao revisar exportação: ' + e.message, 'error');
+  } finally {
+    setLoading('btn-exp-revisar', false);
+  }
+}
+
+async function executarExportacao(idsTurmasSelecionadas) {
+  setLoading('btn-exp-confirmar', true);
+  const meuUid = app.user.uid;
+  const origemId  = exportEsc.origemId;
+  const destinoId = exportEsc.destinoId;
+  const setTurmasSel = new Set(idsTurmasSelecionadas);
+
+  // Helper de batch com auto-commit a cada 400 operações (limite do
+  // Firestore é 500 por batch — fica uma folga de segurança).
+  let batch = db.batch();
+  let opsNoBatch = 0;
+  const batches = [];
+  function addSet(ref, data) {
+    batch.set(ref, data);
+    opsNoBatch++;
+    if (opsNoBatch >= 400) { batches.push(batch); batch = db.batch(); opsNoBatch = 0; }
+  }
+  function finalizarBatch() { if (opsNoBatch > 0) batches.push(batch); }
+
+  try {
+    toast('Exportando...', '');
+
+    // ── FASE 1: LEITURA (com a origem como escola ativa) ──
+    await ativarEscolaSilenciosa(origemId);
+
+    const turmasSelecionadas = exportEsc.turmas.filter(t => setTurmasSel.has(t.id));
+    const alunosSnap = await escCol(origemId, 'alunos').get();
+    const alunosOrigem = alunosSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const provasOrigem = await buscarTodasProvasVisiveis(origemId);
+    const resultadosOrigem = provasOrigem.length ? await buscarTodosResultadosVisiveis(origemId) : [];
+
+    // ── FASE 2: ESCRITA (com o destino como escola ativa) ──
+    await ativarEscolaSilenciosa(destinoId);
+
+    // 1) Turmas selecionadas
+    const turmaIdMap = {};
+    for (const t of turmasSelecionadas) {
+      const { id, ...dados } = t;
+      const novaRef = escCol(destinoId, 'turmas').doc();
+      addSet(novaRef, dados);
+      turmaIdMap[id] = novaRef.id;
+    }
+
+    // 2) Alunos das turmas selecionadas
+    const alunoIdMap = {};
+    for (const a of alunosOrigem) {
+      if (!turmaIdMap[a.turmaId]) continue; // aluno de turma não selecionada
+      const { id, ...dados } = a;
+      const novaRef = escCol(destinoId, 'alunos').doc();
+      addSet(novaRef, { ...dados, turmaId: turmaIdMap[a.turmaId] });
+      alunoIdMap[id] = novaRef.id;
+    }
+
+    // 3) Provas vinculadas às turmas selecionadas
+    const provaIdMap = {};
+    for (const p of provasOrigem) {
+      const turmaIdsAntigas = (p.turmaIds && p.turmaIds.length ? p.turmaIds : (p.turmaId ? [p.turmaId] : []));
+      const turmaIdsNovas = turmaIdsAntigas.filter(tid => turmaIdMap[tid]).map(tid => turmaIdMap[tid]);
+      if (turmaIdsNovas.length === 0) continue; // nenhuma turma desta prova foi exportada
+      const { id, ...dados } = p;
+      const novaRef = escCol(destinoId, 'provas').doc();
+      addSet(novaRef, {
+        ...dados,
+        turmaIds: turmaIdsNovas,
+        turmaId: turmaIdsNovas[0] || '',
+        criadoPor: meuUid, // exigido pelas regras: quem cria o doc precisa ser o dono
+      });
+      provaIdMap[id] = novaRef.id;
+    }
+
+    // 4) Resultados das provas exportadas
+    let numResultadosCopiados = 0;
+    for (const r of resultadosOrigem) {
+      if (!provaIdMap[r.provaId]) continue;
+      const novoAlunoId = alunoIdMap[r.alunoId];
+      if (!novoAlunoId) continue; // aluno não foi exportado (turma não selecionada)
+      const { id, ...dados } = r;
+      const novaRef = escCol(destinoId, 'resultados').doc();
+      addSet(novaRef, {
+        ...dados,
+        provaId: provaIdMap[r.provaId],
+        turmaId: turmaIdMap[r.turmaId] || '',
+        alunoId: novoAlunoId,
+        // Denormalizado — tem que bater com a prova recém-criada no
+        // destino (ver denormalizacaoValida nas regras do Firestore).
+        provaCriadoPor: meuUid,
+      });
+      numResultadosCopiados++;
+    }
+
+    finalizarBatch();
+    for (const b of batches) await b.commit();
+
+    closeModal();
+    toast(`Exportado: ${Object.keys(turmaIdMap).length} turma(s), ${Object.keys(alunoIdMap).length} aluno(s), ${Object.keys(provaIdMap).length} prova(s), ${numResultadosCopiados} resultado(s).`, 'success');
+
+    // Destino já é a escola ativa (fase 2 acima) — refaz o cache local
+    cache.turmas = cache.alunos = cache.provas = null;
+    loadDashStats();
+    if (['turmas','alunos','provas'].includes(app.currentNav)) refreshCurrentView();
+  } catch (e) {
+    toast('Erro durante a exportação: ' + e.message, 'error');
+  } finally {
+    setLoading('btn-exp-confirmar', false);
+  }
 }
 
 function iniciarCriarOutraEscola() {
