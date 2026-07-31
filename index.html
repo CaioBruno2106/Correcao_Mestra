@@ -4291,6 +4291,14 @@ async function vincularProfessor(escolaId, escolaNome, role, disciplinasSalvar) 
   if (disciplinasSalvar !== undefined) payload.disciplinas = disciplinasSalvar;
   await ref.set(payload, { merge: true });
   app.professor = { ...(cur||{}), nome: payload.nome, email: u.email, foto: payload.foto, escolas, escolaAtivaId: escolaId, escolaId, escolaNome, role, disciplinas: disciplinasSalvar ?? cur.disciplinas ?? [] };
+  // Força refresh do token pra puxar o custom claim atualizado assim que
+  // a Cloud Function tiver rodado (ela reage a esta escrita). Sem isso,
+  // o app continuaria usando o claim antigo/vazio até o próximo login.
+  // A regra do Firestore já tem um fallback pro dado real caso o claim
+  // ainda não tenha chegado (ver souDaEscola nas rules), então isso aqui
+  // é só pra convergir o mais rápido possível — não é o que resolve
+  // sozinho o erro de permissão.
+  try { await u.getIdToken(true); } catch(_) {}
 }
 
 /* ── Editar disciplinas do professor ── */
