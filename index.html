@@ -7428,6 +7428,7 @@ async function continuarImportacaoCAEDNM() {
     const r = resPorAluno[a.id];
     const nota10 = r && r.notaMax ? parseFloat(((r.nota / r.notaMax) * 10).toFixed(2)) : null;
     const nivel = r?.nivelInfo?.nivelAtingido || null;
+    const porNivel = r?.nivelInfo?.porNivel || null;
 
     const nNorm = _normNomeNM(a.nome);
     const matchIdx = alunosDestino.findIndex(ad => _normNomeNM(ad.nome) === nNorm);
@@ -7437,6 +7438,7 @@ async function continuarImportacaoCAEDNM() {
       nomeOrigem: a.nome,
       nota10,
       nivel,
+      porNivel,
       matchIdx,
       nomeDestino: matchIdx >= 0 ? alunosDestino[matchIdx].nome : null
     };
@@ -7527,7 +7529,7 @@ async function confirmarEnvioCAEDNM() {
       simuladoNome: prova.nome,
       disciplina:   prova.disciplina || null,
       data:         new Date().toISOString().slice(0, 10),
-      alunos:       enviaveis.map(p => ({ nome: p.nomeDestino, nota: p.nota10, nivel: p.nivel || '' })),
+      alunos:       enviaveis.map(p => ({ nome: p.nomeDestino, nota: p.nota10, nivel: p.nivel || '', porNivel: p.porNivel || null })),
       status:       'pendente',
       enviadoPor:   nmLink.user.email || nmLink.user.uid || null,
       criadoEm:     firebase.firestore.FieldValue.serverTimestamp()
