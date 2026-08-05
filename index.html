@@ -361,6 +361,17 @@ function openTurmaForm(turma) {
       </div>
     </div>
     <div class="input-group">
+      <label class="input-label">Nível de ensino</label>
+      <div class="segmented" id="t-nivel-seg">
+        ${[['fund2','Fund. II'],['medio','Ensino Médio']].map(([v,label]) =>
+          `<div class="seg ${ (edit ? (turma.nivel || _nivelParaNM(turma.nome)) : 'fund2')===v ? 'active' : '' }" data-val="${v}" onclick="segPick(this)">${label}</div>`
+        ).join('')}
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+        Usado só na exportação pro Nota Mestra, pra turma cair na etapa certa lá.
+      </div>
+    </div>
+    <div class="input-group">
       <label class="input-label">Ano letivo</label>
       <input class="input" id="t-ano" type="text" maxlength="9"
              placeholder="Ex: 2026" value="${edit ? escapeHtml(turma.anoLetivo) : String(new Date().getFullYear())}">
@@ -404,6 +415,7 @@ async function salvarTurma(id) {
       cargaHoraria: segValue('t-carga-seg') || 'regular',
       turno:   segValue('t-turno-seg')   || 'Manhã',
       sistema: segValue('t-sistema-seg') || 'Bimestral',
+      nivel:   segValue('t-nivel-seg')   || 'fund2',
     };
     if (!id) {
       data.criadoPor = app.user.uid;
@@ -6317,14 +6329,21 @@ async function confirmarExportarTurmasNM() {
         const sistema = t.sistema === 'Trimestral' ? 'trimestral' : 'bimestral';
         const nomeNorm = _normNomeNM(t.nome);
         const ano = t.anoLetivo || String(new Date().getFullYear());
+        const nivel = t.nivel || _nivelParaNM(t.nome);
+        const turnoNM = _turnoParaCodigoNM(t.turno);
 
         // Só casa com turmas PESSOAIS do Nota Mestra (sem escolaVinculadaId)
         // — turmas de escola vinculada lá têm regra própria de quem pode
-        // escrever, e mexer nelas foge do escopo desta exportação.
+        // escrever, e mexer nelas foge do escopo desta exportação. Também
+        // exige mesmo nível e turno, senão duas turmas diferentes que só
+        // coincidem no nome (ex: "1º A" do Fund. e "1º A" do Médio) acabam
+        // sendo tratadas como a mesma turma e misturando alunos.
         const existente = (nmLink.turmas || []).find(tNM =>
           !tNM.escolaVinculadaId &&
           _normNomeNM(tNM.nome || '') === nomeNorm &&
-          String(tNM.anoLetivo || '') === String(ano)
+          String(tNM.anoLetivo || '') === String(ano) &&
+          (tNM.nivel || 'fund2') === nivel &&
+          (tNM.turno || '') === turnoNM
         );
 
         if (existente) {
@@ -6345,7 +6364,7 @@ async function confirmarExportarTurmasNM() {
           const novoRef = nmDb.collection('users').doc(uid).collection('turmas').doc();
           await novoRef.set({
             nome: t.nome, serie: t.nome, turma: '',
-            nivel: 'fund2',
+            nivel,
             turno: _turnoParaCodigoNM(t.turno),
             disciplina: '',
             anoLetivo: ano,
@@ -6393,9 +6412,17 @@ async function confirmarExportarTurmasNM() {
         const sistema = t.sistema === 'Trimestral' ? 'trimestral' : 'bimestral';
         const nomeNorm = _normNomeNM(t.nome);
         const ano = t.anoLetivo || String(new Date().getFullYear());
+        const nivel = t.nivel || _nivelParaNM(t.nome);
+        const turnoNM = _turnoParaCodigoNM(t.turno);
 
+        // Exige nome + ano + nível + turno batendo — só nome + ano deixava
+        // turmas diferentes (níveis ou turnos distintos) se misturarem numa
+        // única turma-molde.
         const existente = genericas.find(tNM =>
-          _normNomeNM(tNM.nome || '') === nomeNorm && String(tNM.anoLetivo || '') === String(ano)
+          _normNomeNM(tNM.nome || '') === nomeNorm &&
+          String(tNM.anoLetivo || '') === String(ano) &&
+          (tNM.nivel || 'fund2') === nivel &&
+          (tNM.turno || '') === turnoNM
         );
 
         if (existente) {
@@ -6417,7 +6444,7 @@ async function confirmarExportarTurmasNM() {
             escolaTipo: escolaData.tipo || 'municipal',
             nome: t.nome, serie: t.nome, turma: '',
             anoLetivo: ano,
-            nivel: 'fund2',
+            nivel,
             turno: _turnoParaCodigoNM(t.turno),
             disciplina: '',
             atividades: 0,
@@ -7372,7 +7399,18 @@ function renderSeletorAtividadeNM(unidadeSel) {
    Mesma lógica usada pelo Nota Mestra no import manual (_normNome lá). */
 function _normNomeNM(nome) {
   return (nome || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/[^a-z\s]/g, '').replace(/\s+/g, ' ').trim();
+    .toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// Deriva o nível de ensino ('fund2' ou 'medio', únicos que o Nota Mestra
+// entende) a partir do nome da turma, reaproveitando a mesma heurística de
+// _parseSerieTurma. Correção Mestra não guarda nível em lugar nenhum do
+// próprio cadastro de turma — então isso é sempre uma estimativa baseada
+// no texto do nome, não um dado confiável. Sem número reconhecível no
+// início do nome, cai em 'fund2' (mesmo comportamento de antes).
+function _nivelParaNM(nomeTurma) {
+  const guess = _parseSerieTurma(nomeTurma);
+  return guess.nivel === 'Médio' ? 'medio' : 'fund2';
 }
 
 async function continuarImportacaoNM() {
